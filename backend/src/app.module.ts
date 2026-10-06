@@ -3,6 +3,7 @@ import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { DatabaseModule } from './db/connection';
 import { AuthModule } from './auth/auth.module';
 import { MetadataModule } from './metadata/metadata.module';
+import { RecordsModule } from './records/records.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AppErrorFilter } from './common/errors';
 import { ResponseInterceptor, IdempotencyInterceptor } from './common/interceptors';
@@ -12,6 +13,7 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     DatabaseModule,
     AuthModule,
     MetadataModule,
+    RecordsModule,
   ],
   providers: [
     {

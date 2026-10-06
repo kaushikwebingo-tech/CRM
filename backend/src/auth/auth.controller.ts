@@ -58,4 +58,9 @@ export class AuthController {
   async me(@CurrentUser() user: any) {
     return user;
   }
+
+  @Get('users')
+  async listUsers(@CurrentUser() user: any) {
+    return this.authService.listUsers(user.orgId);
+  }
 }

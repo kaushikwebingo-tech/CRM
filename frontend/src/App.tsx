@@ -5,6 +5,7 @@ import { AppLayout } from '@/components/layout/app-layout';
 import { LoginPage } from '@/pages/login';
 import { Dashboard } from '@/pages/dashboard';
 import { ModuleList } from '@/pages/module-list';
+import { RecordDetail } from '@/pages/record-detail';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +26,8 @@ export function App(): JSX.Element {
             <Route path="/" element={<AppLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="m/:moduleKey" element={<ModuleList />} />
+              <Route path="m/:moduleKey/:recordId" element={<RecordDetail />} />
+              <Route path="m/:moduleKey/detail/:recordId" element={<RecordDetail />} />
               <Route path="settings/*" element={<div className="p-6">Settings coming soon</div>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

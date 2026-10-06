@@ -54,4 +54,15 @@ export class AuthService {
       },
     };
   }
+
+  async listUsers(orgId: string) {
+    const rows = await this.db.select({
+      id: users.id,
+      email: users.email,
+      fullName: users.fullName,
+      avatarUrl: users.avatarUrl,
+      isActive: users.isActive,
+    }).from(users).where(and(eq(users.orgId, orgId), eq(users.isActive, true)));
+    return rows;
+  }
 }
