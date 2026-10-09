@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import cookieParser from 'cookie-parser';
 import { json, urlencoded } from 'express';
@@ -38,7 +39,7 @@ function resolveSessionSecret(): string {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   
   // 50 MB was enough for one request to pin the single API process. CSV
   // imports are the only large body, and they are bounded separately.
@@ -51,10 +52,16 @@ async function bootstrap() {
   // client IPs are wrong.
   app.set('trust proxy', 1);
   
-  app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:9000',
-    credentials: true,
-  });
+  // In production Caddy serves the SPA and the API on one origin, so no CORS
+  // exception is needed; a wildcard with credentials would be rejected by the
+  // browser anyway. In development the Vite dev server origin is allowed.
+  const corsOrigin = process.env.CORS_ORIGIN;
+  if (corsOrigin) {
+    app.enableCors({
+      origin: corsOrigin.split(',').map((o) => o.trim()).filter(Boolean),
+      credentials: true,
+    });
+  }
   
   const port = process.env.PORT || 3000;
   await app.listen(port);

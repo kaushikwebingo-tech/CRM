@@ -1,9 +1,47 @@
-:80 {
-	root * /srv
-	try_files {path} /index.html
-	file_server
-
+# Caddy serves the built SPA from disk and proxies /api to the API container,
+# so no Node process sits in the path of a page load (Plan Section 12).
+{$CRM_SITE_ADDRESS::80} {
+	# The API is matched FIRST and handled in its own block.
+	#
+	# The previous single-block version put `try_files {path} /index.html`
+	# beside `handle /api/*`. try_files runs in Caddy's rewrite phase, which is
+	# ordered before `handle`, so every /api/* request was rewritten to
+	# /index.html and answered with the SPA — the API was unreachable through
+	# Caddy entirely.
 	handle /api/* {
-		reverse_proxy api:9000
+		reverse_proxy {$CRM_API_UPSTREAM:api:9000} {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+
+		# The plan's bundle budget is stated in gzipped bytes, so compression is
+		# part of meeting it rather than an optimisation: 216 KB gzipped is
+		# ~840 KB on the wire without this.
+		encode zstd gzip
+
+		# Hashed asset filenames are immutable; index.html must not be cached or
+		# a deploy leaves clients on the previous bundle.
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+		@html path / /index.html
+		header @html Cache-Control "no-cache"
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
 	}
 }
