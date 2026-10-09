@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 
-const BASE_URL = 'http://localhost:3000/api';
+const BASE_URL = 'http://localhost:9000/api';
 
 async function run() {
   const loginRes = await fetch(`${BASE_URL}/auth/login`, {

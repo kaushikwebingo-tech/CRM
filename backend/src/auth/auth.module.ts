@@ -3,12 +3,15 @@ import Redis from 'ioredis';
 import { AuthService } from './auth.service';
 import { SessionService, REDIS } from './session.service';
 import { AuthController } from './auth.controller';
+import { RolesController } from './roles.controller';
+import { RolesService } from './roles.service';
+import { UsersController } from './users.controller';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthGuard } from './auth.guard';
 
 @Global()
 @Module({
-  controllers: [AuthController],
+  controllers: [AuthController, RolesController, UsersController],
   providers: [
     {
       provide: REDIS,
@@ -18,11 +21,12 @@ import { AuthGuard } from './auth.guard';
     },
     AuthService,
     SessionService,
+    RolesService,
     {
       provide: APP_GUARD,
       useClass: AuthGuard,
     },
   ],
-  exports: [AuthService, SessionService, REDIS],
+  exports: [AuthService, SessionService, RolesService, REDIS],
 })
 export class AuthModule {}

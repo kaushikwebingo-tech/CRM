@@ -116,6 +116,28 @@ export class RecordsController {
     return this.recordsService.getTimeline(orgId, moduleKey, recordId);
   }
 
+  @Post(':id/notes')
+  async addNote(
+    @CurrentOrg() orgId: string,
+    @Param('key') moduleKey: string,
+    @Param('id') recordId: string,
+    @Body() body: any,
+    @CurrentUser() currentUser: CurrentUserPayload
+  ) {
+    return this.recordsService.addNote(orgId, moduleKey, recordId, body, currentUser);
+  }
+
+  @Post(':id/attachments')
+  async addAttachment(
+    @CurrentOrg() orgId: string,
+    @Param('key') moduleKey: string,
+    @Param('id') recordId: string,
+    @Body() body: any,
+    @CurrentUser() currentUser: CurrentUserPayload
+  ) {
+    return this.recordsService.addAttachment(orgId, moduleKey, recordId, body, currentUser);
+  }
+
   @Delete(':id')
   async delete(
     @CurrentOrg() orgId: string,

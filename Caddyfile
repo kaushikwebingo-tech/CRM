@@ -4,6 +4,6 @@
 	file_server
 
 	handle /api/* {
-		reverse_proxy api:3000
+		reverse_proxy api:9000
 	}
 }

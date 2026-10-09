@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Box, Settings, Users, Menu, Package2, type LucideIcon, icons } from 'lucide-react';
+import { Box, Users, Zap, Shield, Layers, Menu, Package2, type LucideIcon, icons } from 'lucide-react';
 import { useUiStore } from '@/stores/ui';
 import { useSchema } from '@/hooks/use-schema';
 import { cn } from '@/lib/utils';
@@ -68,8 +68,20 @@ export function Sidebar(): JSX.Element {
               )
             }
           >
-            <Settings className="h-5 w-5 shrink-0" />
-            {sidebarOpen && <span>Module Settings</span>}
+            <Layers className="h-5 w-5 shrink-0" />
+            {sidebarOpen && <span>Modules</span>}
+          </NavLink>
+          <NavLink
+            to="/settings/roles"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              )
+            }
+          >
+            <Shield className="h-5 w-5 shrink-0" />
+            {sidebarOpen && <span>Roles & RBAC</span>}
           </NavLink>
           <NavLink
             to="/settings/users"
@@ -82,6 +94,18 @@ export function Sidebar(): JSX.Element {
           >
             <Users className="h-5 w-5 shrink-0" />
             {sidebarOpen && <span>Users</span>}
+          </NavLink>
+          <NavLink
+            to="/settings/automations"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              )
+            }
+          >
+            <Zap className="h-5 w-5 shrink-0" />
+            {sidebarOpen && <span>Automations</span>}
           </NavLink>
         </nav>
       </div>

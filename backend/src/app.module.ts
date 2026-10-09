@@ -4,6 +4,8 @@ import { DatabaseModule } from './db/connection';
 import { AuthModule } from './auth/auth.module';
 import { MetadataModule } from './metadata/metadata.module';
 import { RecordsModule } from './records/records.module';
+import { FilesModule } from './files/files.module';
+import { AutomationsModule } from './automations/automations.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AppErrorFilter } from './common/errors';
 import { ResponseInterceptor, IdempotencyInterceptor } from './common/interceptors';
@@ -14,6 +16,8 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     AuthModule,
     MetadataModule,
     RecordsModule,
+    FilesModule,
+    AutomationsModule,
   ],
   providers: [
     {

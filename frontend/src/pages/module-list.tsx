@@ -22,6 +22,7 @@ import { ImportCsvModal } from '@/components/csv/import-csv-modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Plus, Search, X, Table, LayoutGrid, Download, Upload } from 'lucide-react';
 
 export function ModuleList(): JSX.Element {
@@ -29,6 +30,7 @@ export function ModuleList(): JSX.Element {
   const navigate = useNavigate();
   const { getModule } = useSchema();
   const { toast } = useToast();
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -188,8 +190,14 @@ export function ModuleList(): JSX.Element {
     navigate(`/m/${moduleKey}/${record.id}`);
   };
 
-  const handleDeleteRecord = (record: RecordItem) => {
-    if (window.confirm(`Are you sure you want to delete "${record.display_name}"?`)) {
+  const handleDeleteRecord = async (record: RecordItem) => {
+    const ok = await confirm({
+      title: 'Delete Record',
+      description: `Are you sure you want to permanently delete "${record.display_name}"? This action cannot be undone.`,
+      confirmText: 'Delete Record',
+      variant: 'destructive',
+    });
+    if (ok) {
       deleteMut.mutate(record.id);
     }
   };

@@ -9,6 +9,8 @@ import { FilterCompiler } from './filter-compiler';
 import { SearchCompiler } from './search-compiler';
 import { encodeCursor, decodeCursor } from './keyset-pagination';
 import { NotFoundError, ValidationError, ForbiddenError } from '../common/errors';
+import Redis from 'ioredis';
+import { REDIS } from '../auth/session.service';
 
 export interface RecordListQuery {
   view?: string;
@@ -25,6 +27,7 @@ export interface CurrentUserPayload {
   orgId: string;
   email: string;
   fullName: string;
+  avatarUrl?: string | null;
   role: {
     id: string;
     name: string;
@@ -36,6 +39,7 @@ export interface CurrentUserPayload {
 export class RecordsService {
   constructor(
     @Inject(PG_CLIENT) private readonly sql: postgres.Sql,
+    @Inject(REDIS) private readonly redis: Redis,
     private readonly schemaCompiler: SchemaCompiler,
     private readonly modulesService: ModulesService
   ) {}
@@ -76,12 +80,11 @@ export class RecordsService {
     }
 
     const searchTexts: string[] = [body.display_name.trim()];
-    for (const key of compiled.searchableKeys) {
-      const field = compiled.fieldsByKey.get(key);
-      if (field && normalizedData[key] !== undefined) {
-        const def = getFieldType(field.type);
-        const st = def.toSearchText(normalizedData[key] as never, field.config as never);
-        if (st) searchTexts.push(st);
+    for (const [k, v] of Object.entries(normalizedData)) {
+      if (typeof v === 'string' && v.trim()) {
+        searchTexts.push(v.trim());
+      } else if (typeof v === 'number') {
+        searchTexts.push(String(v));
       }
     }
     const searchTsv = searchTexts.join(' ');
@@ -174,6 +177,15 @@ export class RecordsService {
             displayName: insertedRecord.display_name,
             actorId: currentUser.id,
             idempotencyKey,
+            data: normalizedData,
+            snapshot: {
+              display_name: insertedRecord.display_name,
+              data: normalizedData,
+              stage_id: insertedRecord.stage_id,
+              pipeline_id: insertedRecord.pipeline_id,
+              owner_id: insertedRecord.owner_id,
+            },
+            causationChain: [],
           })},
           now()
         )
@@ -181,6 +193,8 @@ export class RecordsService {
 
       return [insertedRecord];
     });
+
+    this.redis.publish('outbox:notify', '1').catch(() => {});
 
     return this.expandLookups(orgId, compiled, [record]).then((res) => res[0]);
   }
@@ -277,12 +291,11 @@ export class RecordsService {
     const newPipelineId = body.pipeline_id !== undefined ? body.pipeline_id : existing.pipeline_id;
 
     const searchTexts: string[] = [newDisplayName];
-    for (const key of compiled.searchableKeys) {
-      const field = compiled.fieldsByKey.get(key);
-      if (field && updatedData[key] !== undefined) {
-        const def = getFieldType(field.type);
-        const st = def.toSearchText(updatedData[key] as never, field.config as never);
-        if (st) searchTexts.push(st);
+    for (const [k, v] of Object.entries(updatedData)) {
+      if (typeof v === 'string' && v.trim()) {
+        searchTexts.push(v.trim());
+      } else if (typeof v === 'number') {
+        searchTexts.push(String(v));
       }
     }
     const searchTsv = searchTexts.join(' ');
@@ -352,6 +365,8 @@ export class RecordsService {
 
       return [rec];
     });
+
+    this.redis.publish('outbox:notify', '1').catch(() => {});
 
     const res = await this.expandLookups(orgId, compiled, [updated]);
     return res[0];
@@ -468,6 +483,8 @@ export class RecordsService {
       return [rec];
     });
 
+    this.redis.publish('outbox:notify', '1').catch(() => {});
+
     const res = await this.expandLookups(orgId, compiled, [updated]);
     return res[0];
   }
@@ -496,6 +513,199 @@ export class RecordsService {
       LIMIT 100
     `;
     return events;
+  }
+
+  async addNote(
+    orgId: string,
+    moduleKey: string,
+    recordId: string,
+    payload: { content: string; attachments?: any[] },
+    currentUser: CurrentUserPayload
+  ) {
+    if (!payload.content || !payload.content.trim()) {
+      throw new ValidationError('Note content cannot be empty');
+    }
+    const mod = await this.modulesService.getByKey(orgId, moduleKey);
+
+    const [existing] = await this.sql`
+      SELECT id, display_name FROM records
+      WHERE org_id = ${orgId} AND module_id = ${mod.id} AND id = ${recordId} AND deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (!existing) {
+      throw new NotFoundError(`Record ${recordId} not found`);
+    }
+
+    const notePayload = {
+      content: payload.content.trim(),
+      attachments: payload.attachments || [],
+    };
+
+    const [event] = await this.sql.begin(async (tx) => {
+      const [ev] = await tx`
+        INSERT INTO record_events (
+          org_id,
+          record_id,
+          module_id,
+          type,
+          actor_id,
+          actor_type,
+          payload
+        ) VALUES (
+          ${orgId},
+          ${recordId},
+          ${mod.id},
+          'note',
+          ${currentUser.id},
+          'user',
+          ${JSON.stringify(notePayload)}
+        )
+        RETURNING *
+      `;
+
+      await tx`
+        INSERT INTO outbox_events (
+          org_id,
+          event_type,
+          aggregate_id,
+          payload,
+          available_at
+        ) VALUES (
+          ${orgId},
+          'record.note_added',
+          ${recordId},
+          ${JSON.stringify({
+            moduleKey,
+            recordId,
+            actorId: currentUser.id,
+            content: notePayload.content,
+          })},
+          now()
+        )
+      `;
+
+      return [ev];
+    });
+
+    return {
+      ...event,
+      actor_name: currentUser.fullName,
+      actor_email: currentUser.email,
+      actor_avatar: currentUser.avatarUrl,
+    };
+  }
+
+  async addAttachment(
+    orgId: string,
+    moduleKey: string,
+    recordId: string,
+    fileData: { key: string; name: string; size: number; mime: string; url: string },
+    currentUser: CurrentUserPayload
+  ) {
+    if (!fileData || !fileData.key || !fileData.name) {
+      throw new ValidationError('Invalid attachment file data');
+    }
+    const mod = await this.modulesService.getByKey(orgId, moduleKey);
+
+    const [existing] = await this.sql`
+      SELECT id, display_name, data FROM records
+      WHERE org_id = ${orgId} AND module_id = ${mod.id} AND id = ${recordId} AND deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (!existing) {
+      throw new NotFoundError(`Record ${recordId} not found`);
+    }
+
+    const [event] = await this.sql.begin(async (tx) => {
+      const [ev] = await tx`
+        INSERT INTO record_events (
+          org_id,
+          record_id,
+          module_id,
+          type,
+          actor_id,
+          actor_type,
+          payload
+        ) VALUES (
+          ${orgId},
+          ${recordId},
+          ${mod.id},
+          'attachment',
+          ${currentUser.id},
+          'user',
+          ${JSON.stringify({ file: fileData })}
+        )
+        RETURNING *
+      `;
+
+      await tx`
+        INSERT INTO outbox_events (
+          org_id,
+          event_type,
+          aggregate_id,
+          payload,
+          available_at
+        ) VALUES (
+          ${orgId},
+          'record.attachment_added',
+          ${recordId},
+          ${JSON.stringify({
+            moduleKey,
+            recordId,
+            actorId: currentUser.id,
+            file: fileData,
+          })},
+          now()
+        )
+      `;
+
+      return [ev];
+    });
+
+    return {
+      ...event,
+      actor_name: currentUser.fullName,
+      actor_email: currentUser.email,
+      actor_avatar: currentUser.avatarUrl,
+    };
+  }
+
+  async searchGlobal(orgId: string, query: string, limit: number = 20) {
+    const q = query ? query.trim() : '';
+    if (!q) return [];
+
+    const pattern = `%${q}%`;
+    const rows = await this.sql`
+      SELECT
+        r.id,
+        r.display_name,
+        r.module_id,
+        r.owner_id,
+        r.created_at,
+        r.updated_at,
+        m.key as module_key,
+        m.label_singular as module_label,
+        m.icon as module_icon,
+        m.color as module_color,
+        u.full_name as owner_name
+      FROM records r
+      JOIN modules m ON m.id = r.module_id
+      LEFT JOIN users u ON u.id = r.owner_id
+      WHERE r.org_id = ${orgId}
+        AND r.deleted_at IS NULL
+        AND m.deleted_at IS NULL
+        AND (
+          r.display_name ILIKE ${pattern}
+          OR r.search_tsv ILIKE ${pattern}
+          OR r.data::text ILIKE ${pattern}
+        )
+      ORDER BY
+        CASE WHEN r.display_name ILIKE ${pattern} THEN 1 ELSE 2 END,
+        r.updated_at DESC
+      LIMIT ${limit}
+    `;
+
+    return rows;
   }
 
   async delete(orgId: string, moduleKey: string, recordId: string, currentUser: CurrentUserPayload) {

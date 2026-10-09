@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import postgres from 'postgres';
 
-const BASE_URL = 'http://localhost:3000/api';
+const BASE_URL = 'http://localhost:9000/api';
 const sql = postgres(process.env.DATABASE_URL as string);
 
 interface TestResult {

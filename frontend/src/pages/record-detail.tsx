@@ -1,13 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSchema } from '@/hooks/use-schema';
-import { fetchRecord, updateRecord, changeStage, deleteRecord, fetchTimeline, TimelineEvent } from '@/api/records';
+import {
+  fetchRecord,
+  updateRecord,
+  changeStage,
+  deleteRecord,
+  fetchTimeline,
+  addNote,
+  addAttachment,
+  uploadFile,
+  TimelineEvent,
+} from '@/api/records';
 import { getFieldComponent } from '@/components/fields/registry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   ArrowLeft,
   Save,
@@ -23,6 +34,13 @@ import {
   AlertCircle,
   History,
   GitCommit,
+  Paperclip,
+  FileText,
+  Download,
+  UploadCloud,
+  File,
+  X,
+  Plus,
 } from 'lucide-react';
 
 export function RecordDetail(): JSX.Element {
@@ -30,7 +48,10 @@ export function RecordDetail(): JSX.Element {
   const navigate = useNavigate();
   const { getModule } = useSchema();
   const { toast } = useToast();
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const noteFileInputRef = useRef<HTMLInputElement>(null);
 
   const moduleDef = moduleKey ? getModule(moduleKey) : undefined;
 
@@ -44,7 +65,7 @@ export function RecordDetail(): JSX.Element {
     enabled: Boolean(moduleKey && recordId),
   });
 
-  const { data: timelineEvents } = useQuery<TimelineEvent[]>({
+  const { data: timelineEvents = [] } = useQuery<TimelineEvent[]>({
     queryKey: ['records', moduleKey, recordId, 'timeline'],
     queryFn: () => (moduleKey && recordId ? fetchTimeline(moduleKey, recordId) : []),
     enabled: Boolean(moduleKey && recordId),
@@ -56,6 +77,8 @@ export function RecordDetail(): JSX.Element {
   const [activeTab, setActiveTab] = useState<string>('');
   const [copiedId, setCopiedId] = useState(false);
   const [newComment, setNewComment] = useState('');
+  const [pendingNoteFiles, setPendingNoteFiles] = useState<any[]>([]);
+  const [timelineFilter, setTimelineFilter] = useState<'all' | 'updated' | 'stage_changed' | 'note' | 'attachment'>('all');
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
@@ -76,7 +99,7 @@ export function RecordDetail(): JSX.Element {
   );
 
   useEffect(() => {
-    if (sections.length > 0 && (!activeTab || !sections.includes(activeTab))) {
+    if (sections.length > 0 && (!activeTab || (!sections.includes(activeTab) && !['__timeline__', '__notes__', '__attachments__'].includes(activeTab)))) {
       setActiveTab(sections[0]);
     }
   }, [sections, activeTab]);
@@ -143,6 +166,48 @@ export function RecordDetail(): JSX.Element {
     },
   });
 
+  const addNoteMut = useMutation({
+    mutationFn: (data: { content: string; attachments?: any[] }) =>
+      addNote(moduleKey!, recordId!, data),
+    onSuccess: () => {
+      setNewComment('');
+      setPendingNoteFiles([]);
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      toast({
+        title: 'Note added',
+        description: 'Your note has been posted to the activity feed.',
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Failed to add note',
+        description: err.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const uploadAttachmentMut = useMutation({
+    mutationFn: async (file: File) => {
+      const fileInfo = await uploadFile(file);
+      return addAttachment(moduleKey!, recordId!, fileInfo);
+    },
+    onSuccess: (ev) => {
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      toast({
+        title: 'Attachment uploaded',
+        description: `${(ev.payload as any)?.file?.name || 'File'} uploaded successfully.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Upload failed',
+        description: err.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
   if (!moduleKey || !recordId) {
     return <div className="p-8 text-red-500 font-medium">Invalid route parameters.</div>;
   }
@@ -150,10 +215,8 @@ export function RecordDetail(): JSX.Element {
   if (isLoading) {
     return (
       <div className="p-8 max-w-7xl mx-auto space-y-6 animate-pulse">
-        <div className="h-6 w-32 bg-slate-200 rounded" />
-        <div className="h-20 bg-slate-200 rounded-lg" />
-        <div className="h-12 bg-slate-200 rounded-lg" />
-        <div className="h-96 bg-slate-200 rounded-lg" />
+        <div className="h-10 bg-slate-200 rounded w-1/3"></div>
+        <div className="h-64 bg-slate-200 rounded-xl"></div>
       </div>
     );
   }
@@ -199,8 +262,14 @@ export function RecordDetail(): JSX.Element {
     stageMut.mutate(newStageId);
   };
 
-  const handleDelete = () => {
-    if (window.confirm(`Are you sure you want to delete "${displayName}"?`)) {
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: 'Delete Record',
+      description: `Are you sure you want to permanently delete "${displayName}"? This action cannot be undone.`,
+      confirmText: 'Delete Record',
+      variant: 'destructive',
+    });
+    if (ok) {
       deleteMut.mutate();
     }
   };
@@ -211,35 +280,59 @@ export function RecordDetail(): JSX.Element {
     setTimeout(() => setCopiedId(false), 2000);
   };
 
-  const emailValue = String(formData.email || '');
-  const phoneValue = String(formData.phone || '');
-  const commentsList: Array<{ id: string; text: string; author: string; createdAt: string }> =
-    Array.isArray(formData._comments) ? formData._comments : [];
-
-  const handleAddComment = () => {
-    if (!newComment.trim()) return;
-    const commentItem = {
-      id: crypto.randomUUID(),
-      text: newComment.trim(),
-      author: 'You',
-      createdAt: new Date().toISOString(),
-    };
-    const updatedComments = [commentItem, ...commentsList];
-    const updatedData = { ...formData, _comments: updatedComments };
-    setFormData(updatedData);
-    setNewComment('');
-    updateMut.mutate({
-      display_name: displayName,
-      stage_id: currentStageId || undefined,
-      data: updatedData,
+  const handlePostNote = () => {
+    if (!newComment.trim() && pendingNoteFiles.length === 0) return;
+    addNoteMut.mutate({
+      content: newComment,
+      attachments: pendingNoteFiles,
     });
   };
+
+  const handleNoteFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const fileInfo = await uploadFile(file);
+      setPendingNoteFiles((prev) => [...prev, fileInfo]);
+    } catch (err: any) {
+      toast({
+        title: 'File upload failed',
+        description: err.message,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleGeneralFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    uploadAttachmentMut.mutate(file);
+    e.target.value = '';
+  };
+
+  const emailValue = String(formData.email || '');
+  const phoneValue = String(formData.phone || '');
+
+  const notesList = timelineEvents.filter((ev) => ev.type === 'note');
+  const attachmentsList = timelineEvents.filter((ev) => ev.type === 'attachment');
+
+  const filteredTimeline = timelineEvents.filter((ev) => {
+    if (timelineFilter === 'all') return true;
+    return ev.type === timelineFilter;
+  });
 
   const getInitials = (name: string) => {
     const parts = name.trim().split(/\s+/);
     if (parts.length === 0 || !parts[0]) return 'R';
     if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const activeSectionFields = moduleDef.fields.filter(
@@ -439,10 +532,46 @@ export function RecordDetail(): JSX.Element {
                   }`}
                 >
                   <History className="h-4 w-4" />
-                  <span>Timeline & Audit</span>
-                  {timelineEvents && timelineEvents.length > 0 && (
+                  <span>Timeline</span>
+                  {timelineEvents.length > 0 && (
                     <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
                       {timelineEvents.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('__notes__')}
+                  className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    activeTab === '__notes__'
+                      ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                  }`}
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  <span>Notes</span>
+                  {notesList.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+                      {notesList.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('__attachments__')}
+                  className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    activeTab === '__attachments__'
+                      ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                  }`}
+                >
+                  <Paperclip className="h-4 w-4" />
+                  <span>Attachments</span>
+                  {attachmentsList.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+                      {attachmentsList.length}
                     </span>
                   )}
                 </button>
@@ -450,16 +579,72 @@ export function RecordDetail(): JSX.Element {
 
               <div className="p-6">
                 {activeTab === '__timeline__' ? (
-                  <div className="space-y-4">
-                    {timelineEvents && timelineEvents.length > 0 ? (
+                  <div className="space-y-5">
+                    <div className="flex items-center gap-1 border-b border-slate-100 pb-3 overflow-x-auto text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setTimelineFilter('all')}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          timelineFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        All ({timelineEvents.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimelineFilter('updated')}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          timelineFilter === 'updated' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Field Updates ({timelineEvents.filter((e) => e.type === 'updated').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimelineFilter('stage_changed')}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          timelineFilter === 'stage_changed' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Stage Moves ({timelineEvents.filter((e) => e.type === 'stage_changed').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimelineFilter('note')}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          timelineFilter === 'note' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Notes ({notesList.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimelineFilter('attachment')}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          timelineFilter === 'attachment' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Files ({attachmentsList.length})
+                      </button>
+                    </div>
+
+                    {filteredTimeline.length > 0 ? (
                       <div className="relative border-l border-slate-200 ml-4 space-y-6 py-2">
-                        {timelineEvents.map((ev) => (
+                        {filteredTimeline.map((ev) => (
                           <div key={ev.id} className="relative pl-6">
-                            <div className="absolute -left-2.5 top-1 h-5 w-5 rounded-full bg-white border-2 border-blue-600 flex items-center justify-center">
-                              <GitCommit className="h-2.5 w-2.5 text-blue-600" />
+                            <div className="absolute -left-2.5 top-1.5 h-5 w-5 rounded-full bg-white border-2 border-blue-600 flex items-center justify-center">
+                              {ev.type === 'stage_changed' ? (
+                                <GitCommit className="h-2.5 w-2.5 text-blue-600" />
+                              ) : ev.type === 'note' ? (
+                                <MessageSquare className="h-2.5 w-2.5 text-blue-600" />
+                              ) : ev.type === 'attachment' ? (
+                                <Paperclip className="h-2.5 w-2.5 text-blue-600" />
+                              ) : (
+                                <Clock className="h-2.5 w-2.5 text-blue-600" />
+                              )}
                             </div>
 
-                            <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200 space-y-1.5">
+                            <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200 space-y-2">
                               <div className="flex items-center justify-between text-xs">
                                 <div className="flex items-center gap-2">
                                   <span className="font-bold text-slate-800">
@@ -469,30 +654,74 @@ export function RecordDetail(): JSX.Element {
                                     {ev.type.replace('_', ' ')}
                                   </Badge>
                                 </div>
-                                <span className="text-slate-400">
+                                <span className="text-slate-400 text-[11px]">
                                   {new Date(ev.created_at).toLocaleString()}
                                 </span>
                               </div>
 
                               {ev.type === 'stage_changed' ? (
                                 <p className="text-xs text-slate-700">
-                                  Stage changed to{' '}
+                                  Moved stage to{' '}
                                   <span className="font-bold text-blue-600">
                                     {String(ev.payload?.to_stage_label || ev.changes?.stage_id?.to || 'new stage')}
                                   </span>
                                 </p>
+                              ) : ev.type === 'note' ? (
+                                <div className="space-y-2">
+                                  <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                    {String(ev.payload?.content || '')}
+                                  </p>
+                                  {Array.isArray(ev.payload?.attachments) && ev.payload.attachments.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                      {ev.payload.attachments.map((att: any, idx: number) => (
+                                        <a
+                                          key={idx}
+                                          href={att.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-white border border-slate-200 text-xs text-blue-600 hover:underline"
+                                        >
+                                          <FileText className="h-3 w-3 text-slate-500" />
+                                          <span className="truncate max-w-[150px]">{att.name}</span>
+                                          <Download className="h-3 w-3 text-slate-400" />
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : ev.type === 'attachment' ? (
+                                <div className="flex items-center justify-between bg-white p-2.5 rounded border border-slate-200 text-xs">
+                                  <div className="flex items-center gap-2 truncate">
+                                    <File className="h-4 w-4 text-blue-600 shrink-0" />
+                                    <span className="font-medium text-slate-800 truncate">
+                                      {(ev.payload as any)?.file?.name || 'Attachment'}
+                                    </span>
+                                    <span className="text-[11px] text-slate-400 shrink-0">
+                                      ({formatFileSize((ev.payload as any)?.file?.size)})
+                                    </span>
+                                  </div>
+                                  <a
+                                    href={(ev.payload as any)?.file?.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    download
+                                    className="p-1 text-slate-500 hover:text-blue-600 shrink-0"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </a>
+                                </div>
                               ) : ev.changes && Object.keys(ev.changes).length > 0 ? (
                                 <div className="text-xs text-slate-600 space-y-1 pt-1">
                                   {Object.entries(ev.changes).map(([k, diff]) => (
                                     <div
                                       key={k}
-                                      className="font-mono text-[11px] bg-white px-2 py-1 rounded border border-slate-100"
+                                      className="font-mono text-[11px] bg-white px-2 py-1 rounded border border-slate-100 flex items-center gap-2"
                                     >
-                                      <span className="text-slate-500 font-sans">{k}:</span>{' '}
+                                      <span className="text-slate-500 font-sans font-medium">{k}:</span>
                                       <span className="text-rose-600 line-through">
                                         {String(diff.from ?? 'empty')}
-                                      </span>{' '}
-                                      <span className="text-slate-400">→</span>{' '}
+                                      </span>
+                                      <span className="text-slate-400">→</span>
                                       <span className="text-emerald-600 font-semibold">
                                         {String(diff.to ?? 'empty')}
                                       </span>
@@ -500,7 +729,7 @@ export function RecordDetail(): JSX.Element {
                                   ))}
                                 </div>
                               ) : (
-                                <p className="text-xs text-slate-500">Event recorded</p>
+                                <p className="text-xs text-slate-500">Record activity recorded</p>
                               )}
                             </div>
                           </div>
@@ -508,9 +737,200 @@ export function RecordDetail(): JSX.Element {
                       </div>
                     ) : (
                       <div className="py-12 text-center text-slate-400 text-sm">
-                        No audit events recorded yet.
+                        No events match the selected filter.
                       </div>
                     )}
+                  </div>
+                ) : activeTab === '__notes__' ? (
+                  <div className="space-y-6">
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                      <div className="font-semibold text-xs text-slate-700 uppercase tracking-wider">
+                        Add New Note
+                      </div>
+                      <textarea
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        placeholder="Write note or meeting summary..."
+                        rows={3}
+                        className="w-full rounded-lg border border-slate-200 p-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none bg-white"
+                      />
+
+                      {pendingNoteFiles.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {pendingNoteFiles.map((f, i) => (
+                            <div
+                              key={i}
+                              className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-xs"
+                            >
+                              <Paperclip className="h-3 w-3 text-slate-400" />
+                              <span className="truncate max-w-[150px] font-medium text-slate-700">{f.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => setPendingNoteFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                                className="text-slate-400 hover:text-red-600 ml-1"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div>
+                          <input
+                            type="file"
+                            ref={noteFileInputRef}
+                            onChange={handleNoteFileUpload}
+                            className="hidden"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => noteFileInputRef.current?.click()}
+                            className="text-xs text-slate-600 hover:text-slate-900 gap-1.5 h-8"
+                          >
+                            <Paperclip className="h-3.5 w-3.5" />
+                            <span>Attach file</span>
+                          </Button>
+                        </div>
+
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handlePostNote}
+                          disabled={(!newComment.trim() && pendingNoteFiles.length === 0) || addNoteMut.isPending}
+                          className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs h-8"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>{addNoteMut.isPending ? 'Posting...' : 'Post Note'}</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {notesList.length === 0 ? (
+                        <div className="py-12 text-center text-slate-400 text-sm">
+                          No notes have been added yet. Add a note using the box above.
+                        </div>
+                      ) : (
+                        notesList.map((note) => (
+                          <div
+                            key={note.id}
+                            className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-2.5"
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2">
+                                <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-[10px]">
+                                  {getInitials(note.actor_name || 'U')}
+                                </div>
+                                <span className="font-bold text-slate-800">{note.actor_name || 'User'}</span>
+                              </div>
+                              <span className="text-slate-400 text-[11px]">
+                                {new Date(note.created_at).toLocaleString()}
+                              </span>
+                            </div>
+
+                            <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                              {String(note.payload?.content || '')}
+                            </p>
+
+                            {Array.isArray(note.payload?.attachments) && note.payload.attachments.length > 0 && (
+                              <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+                                {note.payload.attachments.map((att: any, idx: number) => (
+                                  <a
+                                    key={idx}
+                                    href={att.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-blue-600 hover:bg-blue-50/50"
+                                  >
+                                    <FileText className="h-3.5 w-3.5 text-slate-500" />
+                                    <span className="font-medium truncate max-w-[180px]">{att.name}</span>
+                                    <Download className="h-3.5 w-3.5 text-slate-400 ml-1" />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : activeTab === '__attachments__' ? (
+                  <div className="space-y-6">
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-blue-50/20"
+                    >
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleGeneralFileUpload}
+                        className="hidden"
+                      />
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="p-3 bg-blue-100 text-blue-600 rounded-full">
+                          <UploadCloud className="h-6 w-6" />
+                        </div>
+                        <div className="text-sm font-semibold text-slate-800">
+                          {uploadAttachmentMut.isPending ? 'Uploading file...' : 'Click or drop files to upload'}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          Supports PDF, DOCX, images, and spreadsheets
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                        Files on this record ({attachmentsList.length})
+                      </div>
+
+                      {attachmentsList.length === 0 ? (
+                        <div className="py-8 text-center text-slate-400 text-sm">
+                          No files uploaded yet.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {attachmentsList.map((att) => {
+                            const fileInfo = (att.payload as any)?.file;
+                            return (
+                              <div
+                                key={att.id}
+                                className="flex items-center justify-between p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs"
+                              >
+                                <div className="flex items-center gap-3 truncate min-w-0 pr-2">
+                                  <div className="p-2 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+                                    <File className="h-5 w-5" />
+                                  </div>
+                                  <div className="truncate">
+                                    <div className="font-semibold text-slate-800 text-xs truncate">
+                                      {fileInfo?.name || 'File'}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400">
+                                      {formatFileSize(fileInfo?.size)} • {new Date(att.created_at).toLocaleDateString()}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <a
+                                  href={fileInfo?.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  download
+                                  className="p-2 text-slate-500 hover:text-blue-600 hover:bg-slate-50 rounded-lg shrink-0"
+                                  title="Download"
+                                >
+                                  <Download className="h-4 w-4" />
+                                </a>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : activeSectionFields.length === 0 ? (
                   <div className="py-12 text-center text-slate-400 text-sm">
@@ -556,53 +976,109 @@ export function RecordDetail(): JSX.Element {
 
           <div className="space-y-6">
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-3">
-                <MessageSquare className="h-4 w-4 text-blue-600" />
-                <span>Comments & Notes</span>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-800 uppercase tracking-wider">
+                  <MessageSquare className="h-4 w-4 text-blue-600" />
+                  <span>Quick Notes</span>
+                </div>
+                <Badge variant="outline" className="text-xs">
+                  {notesList.length}
+                </Badge>
               </div>
 
               <div className="space-y-2">
                 <textarea
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Write a comment or internal note..."
-                  rows={3}
-                  className="w-full rounded-lg border border-slate-200 p-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                  placeholder="Post an internal note..."
+                  rows={2}
+                  className="w-full rounded-lg border border-slate-200 p-2.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
                 />
                 <div className="flex justify-end">
                   <Button
                     type="button"
                     size="sm"
-                    onClick={handleAddComment}
-                    disabled={!newComment.trim() || updateMut.isPending}
-                    className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs h-8"
+                    onClick={handlePostNote}
+                    disabled={!newComment.trim() || addNoteMut.isPending}
+                    className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs h-7"
                   >
-                    <Send className="h-3.5 w-3.5" />
-                    <span>Post Note</span>
+                    <Send className="h-3 w-3" />
+                    <span>Post</span>
                   </Button>
                 </div>
               </div>
 
-              <div className="space-y-3 pt-2 max-h-96 overflow-y-auto">
-                {commentsList.length === 0 ? (
+              <div className="space-y-3 pt-2 max-h-72 overflow-y-auto">
+                {notesList.length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-4">
-                    No comments yet. Leave a note above.
+                    No notes yet. Post a note above.
                   </p>
                 ) : (
-                  commentsList.map((c) => (
+                  notesList.slice(0, 5).map((n) => (
                     <div
-                      key={c.id}
+                      key={n.id}
                       className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-xs space-y-1.5"
                     >
                       <div className="flex items-center justify-between text-slate-500">
-                        <span className="font-semibold text-slate-700">{c.author}</span>
-                        <span className="text-[10px]">{new Date(c.createdAt).toLocaleString()}</span>
+                        <span className="font-semibold text-slate-700">{n.actor_name || 'User'}</span>
+                        <span className="text-[10px]">{new Date(n.created_at).toLocaleString()}</span>
                       </div>
-                      <p className="text-slate-700 whitespace-pre-wrap leading-relaxed">{c.text}</p>
+                      <p className="text-slate-700 whitespace-pre-wrap leading-relaxed">
+                        {String(n.payload?.content || '')}
+                      </p>
                     </div>
                   ))
                 )}
               </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Attachments ({attachmentsList.length})
+                </h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="h-6 text-xs text-blue-600 hover:text-blue-700 p-0"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  Upload
+                </Button>
+              </div>
+
+              {attachmentsList.length === 0 ? (
+                <p className="text-xs text-slate-400 italic py-2 text-center">
+                  No attached files.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {attachmentsList.map((att) => {
+                    const f = (att.payload as any)?.file;
+                    return (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-100 text-xs"
+                      >
+                        <div className="flex items-center gap-2 truncate pr-2">
+                          <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                          <span className="truncate font-medium text-slate-700">{f?.name || 'File'}</span>
+                        </div>
+                        <a
+                          href={f?.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          download
+                          className="text-slate-400 hover:text-blue-600 shrink-0"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">

@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { bulkAction, fetchOrgUsers } from '@/api/records';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   Users,
   GitCommit,
@@ -28,6 +29,7 @@ export function BulkActionBar({
   onSuccess,
 }: BulkActionBarProps): JSX.Element | null {
   const { toast } = useToast();
+  const confirm = useConfirm();
   const [assignOpen, setAssignOpen] = useState(false);
   const [stageOpen, setStageOpen] = useState(false);
 
@@ -164,8 +166,14 @@ export function BulkActionBar({
       <Button
         size="sm"
         variant="ghost"
-        onClick={() => {
-          if (window.confirm(`Delete ${selectedIds.length} records?`)) {
+        onClick={async () => {
+          const ok = await confirm({
+            title: 'Delete Selected Records',
+            description: `Are you sure you want to permanently delete ${selectedIds.length} records? This action cannot be undone.`,
+            confirmText: `Delete ${selectedIds.length} Records`,
+            variant: 'destructive',
+          });
+          if (ok) {
             bulkMut.mutate({
               action: 'delete',
               record_ids: selectedIds,

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { X, Bookmark, LayoutGrid, Table } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 export interface SavedViewsBarProps {
   moduleKey: string;
@@ -32,6 +33,7 @@ export function SavedViewsBar({
 }: SavedViewsBarProps): JSX.Element {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const confirm = useConfirm();
   const [modalOpen, setModalOpen] = useState(false);
   const [viewName, setViewName] = useState('');
 
@@ -135,9 +137,15 @@ export function SavedViewsBar({
               {!v.isDefault && (
                 <button
                   type="button"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (window.confirm(`Delete view "${v.name}"?`)) {
+                    const ok = await confirm({
+                      title: 'Delete Saved View',
+                      description: `Are you sure you want to delete view "${v.name}"? This action cannot be undone.`,
+                      confirmText: 'Delete View',
+                      variant: 'destructive',
+                    });
+                    if (ok) {
                       deleteMut.mutate(v.id);
                     }
                   }}

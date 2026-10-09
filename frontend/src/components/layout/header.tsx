@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { Search, LogOut } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -7,6 +8,7 @@ import { useSchema } from '@/hooks/use-schema';
 import { logout } from '@/api/auth';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { GlobalSearchDialog } from '@/components/search/global-search-dialog';
 
 export function Header(): JSX.Element {
   const { user } = useAuth();
@@ -14,6 +16,18 @@ export function Header(): JSX.Element {
   const { moduleKey } = useParams<{ moduleKey?: string }>();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const activeModule = moduleKey ? getModule(moduleKey) : undefined;
   
@@ -45,13 +59,19 @@ export function Header(): JSX.Element {
       </div>
 
       <div className="flex items-center gap-4">
-        <Button variant="outline" className="w-64 justify-start text-gray-500">
+        <Button
+          variant="outline"
+          onClick={() => setSearchOpen(true)}
+          className="w-64 justify-start text-gray-500 hover:text-gray-900 cursor-pointer"
+        >
           <Search className="mr-2 h-4 w-4" />
           <span>Search...</span>
           <kbd className="ml-auto rounded border bg-gray-50 px-1.5 font-mono text-[10px] font-medium text-gray-500">
             ⌘K
           </kbd>
         </Button>
+
+        <GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>

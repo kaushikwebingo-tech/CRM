@@ -213,3 +213,55 @@ export function fetchOrgUsers(): Promise<OrgUser[]> {
   return api.get<OrgUser[]>('/api/auth/users');
 }
 
+export function addNote(
+  moduleKey: string,
+  recordId: string,
+  data: { content: string; attachments?: any[] }
+): Promise<TimelineEvent> {
+  return api.post<TimelineEvent>(`/api/modules/${moduleKey}/records/${recordId}/notes`, data);
+}
+
+export function addAttachment(
+  moduleKey: string,
+  recordId: string,
+  fileData: { key: string; name: string; size: number; mime: string; url: string }
+): Promise<TimelineEvent> {
+  return api.post<TimelineEvent>(`/api/modules/${moduleKey}/records/${recordId}/attachments`, fileData);
+}
+
+export async function uploadFile(
+  file: File
+): Promise<{ key: string; name: string; size: number; mime: string; url: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch('/api/files/upload', {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: 'File upload failed' }));
+    throw new Error(err.message || 'File upload failed');
+  }
+  return res.json();
+}
+
+export interface SearchResultItem {
+  id: string;
+  display_name: string;
+  module_id: string;
+  owner_id: string | null;
+  created_at: string;
+  updated_at: string;
+  module_key: string;
+  module_label: string;
+  module_icon: string | null;
+  module_color: string | null;
+  owner_name: string | null;
+}
+
+export function searchGlobal(q: string): Promise<SearchResultItem[]> {
+  return api.get<SearchResultItem[]>('/api/search', { q });
+}
+
+
