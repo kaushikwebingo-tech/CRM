@@ -661,6 +661,22 @@ Free text search (`?q=`) runs against `search_tsv`, which is rebuilt on write fr
 
 The risk in a dynamic filter engine is a user-supplied string reaching SQL. The defence is structural, not a sanitiser: the compiler accepts a typed AST, resolves every identifier against compiled metadata, and binds every value. Write one test suite that feeds the compiler hostile input — unknown fields, SQL in field names, 50-deep nesting, arrays of 100,000 ids — and asserts a rejection rather than a query.
 
+### Interactive Filter Builder & View Persistence
+
+The user-facing application exposes an interactive Filter Popover (`FilterBuilder`) on every module list view:
+
+1. **Dynamic Field Discovery:** Inspects `moduleDef.fields` alongside core metadata (`display_name`, `stage_id`, `created_at`), displaying user-friendly labels.
+2. **Type-Aware Condition Grammar:** Dynamically restricts operators based on the field's compiled SQL type:
+   - Text/Phone/Email: `contains`, `eq`, `not_contains`, `starts_with`, `ends_with`, `is_empty`, `is_not_empty`
+   - Numeric/Currency: `=`, `!=`, `>`, `>=`, `<`, `<=`, `is_empty`, `is_not_empty`
+   - Picklist/Select: `is`, `is not`, `is_empty`, `is_not_empty` (populated with field options)
+   - Pipeline Stages: `is`, `is not` (populated with active pipeline stages)
+   - Dates: relative tokens (`within: today | this_week | next_7_days | overdue`) and calendar boundaries (`before`, `after`, `is on`)
+   - Booleans: `is Yes / True`, `is No / False`
+3. **Compound Rule Generation:** Compiles user conditions into the standard Filter DSL `{ and: [...] }` tree.
+4. **Live Execution & Indicator:** Updates query parameters in real-time, displays an active count badge `Filter (N)` on the toolbar, and passes the criteria to CSV export.
+5. **Saved View Persistence:** Integrated directly with the `SavedViewsBar`: users can click **"Save as View"** from either the filter popover or the view bar to persist their custom filter and sort criteria to PostgreSQL (`views.config.filter`), instantly pinning it as a reusable quick-access tab.
+
 ## Pipelines and stages
 
 A module with `has_pipeline = true` gains a kanban view and stage tracking. Stages are rows, so an admin builds "New → Contacted → Qualified → Proposal → Won / Lost" in the UI and renames or reorders it later without a deploy.

@@ -1,12 +1,10 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { optionsConfigSchema, optionIds, toScalarString, importCell } from '../shared';
 
 const configSchema = z.object({
-  options: z.array(z.object({
-    id: z.string(),
-    label: z.string(),
-    color: z.string().optional(),
-  })).default([]),
+  options: optionsConfigSchema,
+  allowOther: z.boolean().default(false),
 });
 
 type Config = z.infer<typeof configSchema>;
@@ -26,16 +24,30 @@ export const selectField: FieldTypeDef<Config, string> = {
   },
   sqlType: 'text',
   operators: SELECT_OPERATORS,
-  normalize(input) {
-    if (input == null || input === '') return null;
-    return String(input).trim();
+  normalize(input, config) {
+    const raw = toScalarString(input);
+    if (!raw) return null;
+    const value = raw.trim();
+    if (!value) return null;
+
+    const ids = optionIds(config?.options);
+    if (ids.has(value)) return value;
+
+    const byLabel = (config?.options ?? []).find(
+      (o) => o.label.toLowerCase() === value.toLowerCase(),
+    );
+    if (byLabel) return byLabel.id;
+
+    return config?.allowOther ? value : null;
   },
   toSearchText(value, config) {
     const option = config.options?.find(o => o.id === value);
     return option ? option.label : value;
   },
   toExportString(value) { return value; },
-  parseImport(raw) { return raw.trim() || null; },
+  parseImport(raw, config) {
+    return selectField.normalize(importCell(raw), config);
+  },
   formComponent: 'SelectInput',
   cellComponent: 'SelectCell',
   filterComponent: 'SelectFilter',

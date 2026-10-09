@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeText, importCell } from '../shared';
 
 const configSchema = z.object({});
 
@@ -20,8 +21,10 @@ export const emailField: FieldTypeDef<Config, string> = {
   sqlType: 'text',
   operators: TEXT_OPERATORS,
   normalize(input) {
-    if (input == null || input === '') return null;
-    return String(input).trim().toLowerCase();
+    const value = normalizeText(input, 320);
+    if (!value) return null;
+    const lowered = value.toLowerCase();
+    return /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(lowered) ? lowered : null;
   },
   toSearchText(value) { return value; },
   toExportString(value) { return value; },

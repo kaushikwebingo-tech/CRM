@@ -43,6 +43,12 @@ export class AuthGuard implements CanActivate {
     if (!user) {
       throw new UnauthorizedException();
     }
+    // A user deactivated after signing in kept a valid session for up to
+    // thirty days, because nothing rechecked is_active on the way through.
+    if (user.isActive === false) {
+      await this.sessionService.destroyUserSessions(session.userId);
+      throw new UnauthorizedException();
+    }
 
     await this.sessionService.touchSession(sessionId);
     request.user = user;

@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeStringArray, importCell } from '../shared';
 
-const configSchema = z.object({});
+const configSchema = z.object({
+  maxTags: z.number().int().min(1).max(500).default(50),
+});
 
 type Config = z.infer<typeof configSchema>;
 
@@ -19,16 +22,18 @@ export const tagsField: FieldTypeDef<Config, string[]> = {
   },
   sqlType: 'jsonb',
   operators: TAGS_OPERATORS,
-  normalize(input) {
-    if (!Array.isArray(input)) return null;
-    const arr = input.filter(x => x != null).map(String).map(s => s.trim()).filter(Boolean);
-    return arr.length > 0 ? arr : null;
+  normalize(input, config) {
+    return normalizeStringArray(input, { maxItems: config?.maxTags ?? 50, maxLength: 120 });
   },
   toSearchText(value) { return value.join(', '); },
   toExportString(value) { return value.join(','); },
-  parseImport(raw) {
-    const arr = raw.split(',').map(s => s.trim()).filter(Boolean);
-    return arr.length > 0 ? arr : null;
+  parseImport(raw, config) {
+    const cell = importCell(raw);
+    if (!cell) return null;
+    return normalizeStringArray(cell.split(',').map((s) => s.trim()).filter(Boolean), {
+      maxItems: config?.maxTags ?? 50,
+      maxLength: 120,
+    });
   },
   formComponent: 'TagsInput',
   cellComponent: 'TagsCell',

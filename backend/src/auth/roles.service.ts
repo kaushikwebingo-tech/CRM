@@ -2,7 +2,8 @@ import { Injectable, Inject } from '@nestjs/common';
 import { DATABASE } from '../db/connection';
 import { roles, users } from '../db/schema';
 import { eq, and, asc } from 'drizzle-orm';
-import { ConflictError, ForbiddenError, NotFoundError } from '../common/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../common/errors';
+import { permissionsSchema, isOwner, parsePermissions } from './permissions';
 
 export interface CreateRoleDto {
   name: string;
@@ -68,7 +69,23 @@ export class RolesService {
       valuesToUpdate.name = data.name.trim();
     }
     if (data.permissions !== undefined) {
-      valuesToUpdate.permissions = data.permissions;
+      if (isOwner(parsePermissions(existing.permissions))) {
+        throw new ForbiddenError(
+          'The Owner role always has full access and its permissions cannot be edited. ' +
+            'Duplicate it to create a restricted role.',
+        );
+      }
+
+      const parsed = permissionsSchema.safeParse(data.permissions);
+      if (!parsed.success) {
+        throw new ValidationError('The permissions document is not valid', [
+          { field: 'permissions', message: parsed.error.issues[0]?.message ?? 'Invalid shape' },
+        ]);
+      }
+      if (parsed.data.all) {
+        throw new ForbiddenError('Full access cannot be granted by editing a role');
+      }
+      valuesToUpdate.permissions = parsed.data;
     }
 
     const [updated] = await this.db

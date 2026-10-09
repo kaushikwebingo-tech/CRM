@@ -48,6 +48,62 @@ const CORE_FIELDS: Record<string, { expr: string; type: string; operators: Filte
   },
 };
 
+
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function arrayCast(sqlType: string): string {
+  switch (sqlType) {
+    case 'uuid': return '::uuid[]';
+    case 'numeric': return '::numeric[]';
+    case 'date': return '::date[]';
+    case 'timestamptz': return '::timestamptz[]';
+    case 'boolean': return '::boolean[]';
+    default: return '::text[]';
+  }
+}
+
+type WithinWindow = {
+  kind: 'range' | 'before' | 'after';
+  lower: (tz: string) => string;
+  upper?: (tz: string) => string;
+};
+
+/**
+ * Each boundary is `date_trunc(... , now() AT TIME ZONE $tz)` converted back to
+ * an instant, so Postgres handles the timezone and DST rather than the Node
+ * process's local clock.
+ */
+const DAY = (offset: number) => (tz: string) =>
+  `((date_trunc('day', (now() AT TIME ZONE ${tz})) + interval '${offset} day') AT TIME ZONE ${tz})`;
+/**
+ * Postgres has a `quarter` truncation unit but no `quarter` interval unit, so a
+ * quarter offset has to be expressed in months.
+ */
+const TRUNC = (unit: string, offset: number) => (tz: string) => {
+  const step = unit === 'quarter' ? `${offset * 3} month` : `${offset} ${unit}`;
+  return `((date_trunc('${unit}', (now() AT TIME ZONE ${tz})) + interval '${step}') AT TIME ZONE ${tz})`;
+};
+
+const WITHIN_TOKENS: Record<string, WithinWindow> = {
+  today:        { kind: 'range', lower: DAY(0),  upper: DAY(1) },
+  yesterday:    { kind: 'range', lower: DAY(-1), upper: DAY(0) },
+  tomorrow:     { kind: 'range', lower: DAY(1),  upper: DAY(2) },
+  this_week:    { kind: 'range', lower: TRUNC('week', 0),    upper: TRUNC('week', 1) },
+  last_week:    { kind: 'range', lower: TRUNC('week', -1),   upper: TRUNC('week', 0) },
+  this_month:   { kind: 'range', lower: TRUNC('month', 0),   upper: TRUNC('month', 1) },
+  last_month:   { kind: 'range', lower: TRUNC('month', -1),  upper: TRUNC('month', 0) },
+  this_quarter: { kind: 'range', lower: TRUNC('quarter', 0), upper: TRUNC('quarter', 1) },
+  last_quarter: { kind: 'range', lower: TRUNC('quarter', -1),upper: TRUNC('quarter', 0) },
+  this_year:    { kind: 'range', lower: TRUNC('year', 0),    upper: TRUNC('year', 1) },
+  last_7_days:  { kind: 'range', lower: DAY(-7), upper: DAY(1) },
+  next_7_days:  { kind: 'range', lower: DAY(0),  upper: DAY(8) },
+  last_30_days: { kind: 'range', lower: DAY(-30), upper: DAY(1) },
+  next_30_days: { kind: 'range', lower: DAY(0),  upper: DAY(31) },
+  overdue:      { kind: 'before', lower: DAY(0) },
+  upcoming:     { kind: 'after',  lower: DAY(1) },
+};
+
 export class FilterCompiler {
   private params: unknown[] = [];
   private paramIndex = 1;
@@ -55,7 +111,8 @@ export class FilterCompiler {
   constructor(
     private readonly module: CompiledModule,
     private readonly currentUserId?: string,
-    initialParamIndex: number = 1
+    initialParamIndex: number = 1,
+    private readonly timezone: string = process.env.ORG_TIMEZONE || 'UTC'
   ) {
     this.paramIndex = initialParamIndex;
   }
@@ -84,21 +141,43 @@ export class FilterCompiler {
   }
 
   private compileGroup(group: FilterGroup, depth: number): { sql: string; params: unknown[] } {
-    if (group.and && Array.isArray(group.and)) {
-      if (group.and.length === 0) return { sql: '1=1', params: this.params };
-      if (group.and.length > 100) throw new ValidationError('Filter group contains too many conditions');
-      const parts = group.and.map((child) => this.compileNode(child, depth + 1));
-      return { sql: `(${parts.join(' AND ')})`, params: this.params };
+    const clauses: string[] = [];
+
+    if (group.and !== undefined) {
+      if (!Array.isArray(group.and)) {
+        throw new ValidationError('Filter "and" must be an array');
+      }
+      if (group.and.length > 100) {
+        throw new ValidationError('Filter group contains too many conditions');
+      }
+      clauses.push(
+        group.and.length === 0
+          ? '1=1'
+          : `(${group.and.map((child) => this.compileNode(child, depth + 1)).join(' AND ')})`,
+      );
     }
 
-    if (group.or && Array.isArray(group.or)) {
-      if (group.or.length === 0) return { sql: '1=0', params: this.params };
-      if (group.or.length > 100) throw new ValidationError('Filter group contains too many conditions');
-      const parts = group.or.map((child) => this.compileNode(child, depth + 1));
-      return { sql: `(${parts.join(' OR ')})`, params: this.params };
+    if (group.or !== undefined) {
+      if (!Array.isArray(group.or)) {
+        throw new ValidationError('Filter "or" must be an array');
+      }
+      if (group.or.length > 100) {
+        throw new ValidationError('Filter group contains too many conditions');
+      }
+      clauses.push(
+        group.or.length === 0
+          ? '1=0'
+          : `(${group.or.map((child) => this.compileNode(child, depth + 1)).join(' OR ')})`,
+      );
     }
 
-    throw new ValidationError('Filter group must specify "and" or "or"');
+    if (clauses.length === 0) {
+      throw new ValidationError('Filter group must specify "and" or "or"');
+    }
+
+    // A group with both keys means both apply. Dropping one, as this used to,
+    // silently widens the result set — the worst failure mode for a filter.
+    return { sql: clauses.length === 1 ? clauses[0] : `(${clauses.join(' AND ')})`, params: this.params };
   }
 
   private compileNode(node: FilterNode, depth: number): string {
@@ -126,35 +205,39 @@ export class FilterCompiler {
     let sqlExpr: string;
     let allowedOps: FilterOperator[];
     let fieldType: string;
+    let sqlType: string;
 
-    if (CORE_FIELDS[field]) {
-      sqlExpr = CORE_FIELDS[field].expr;
-      allowedOps = CORE_FIELDS[field].operators;
-      fieldType = CORE_FIELDS[field].type;
-    } else {
-      const compiledField = this.module.fieldsByKey.get(field);
-      if (!compiledField) {
-        throw new ValidationError(`Unknown field: ${field}`);
-      }
+    const compiledField = this.module.fieldsByKey.get(field);
+    if (compiledField) {
       sqlExpr = compiledField.sqlExpr.sql;
       allowedOps = compiledField.operators;
       fieldType = compiledField.type;
+      sqlType = compiledField.sqlExpr.type;
+    } else if (CORE_FIELDS[field]) {
+      sqlExpr = CORE_FIELDS[field].expr;
+      allowedOps = CORE_FIELDS[field].operators;
+      fieldType = CORE_FIELDS[field].type;
+      sqlType = CORE_FIELDS[field].type;
+    } else {
+      throw new ValidationError(`Unknown field: ${field}`, [
+        { field: 'filter', message: `"${field}" is not a field on this module` },
+      ]);
     }
 
     if (!allowedOps.includes(op)) {
       throw new ValidationError(`Operator "${op}" is not allowed for field "${field}" of type "${fieldType}"`);
     }
 
-    if (value === '@me') {
-      if (!this.currentUserId) {
-        throw new ValidationError('Cannot resolve @me without an authenticated user');
-      }
-      value = this.currentUserId;
-    }
+    value = this.resolveMe(value);
 
     if (Array.isArray(value) && value.length > 1000) {
       throw new ValidationError('Array value in filter cannot exceed 1000 items');
     }
+
+    // Plan Section 8 rule 3 binds every value, but binding a value of the wrong
+    // shape still raises inside Postgres (22P02) and fails the whole query, so
+    // the shape is checked here where it can still be a clean 400.
+    value = this.assertValueShape(field, sqlType, op, value);
 
     switch (op) {
       case 'eq': {
@@ -217,17 +300,23 @@ export class FilterCompiler {
       }
 
       case 'is_empty': {
-        if (fieldType === 'multi_select' || fieldType === 'tags' || fieldType === 'file') {
-          return `(${sqlExpr} IS NULL OR ${sqlExpr} = '[]'::jsonb)`;
+        if (sqlType === 'jsonb') {
+          return `(${sqlExpr} IS NULL OR ${sqlExpr} = '[]'::jsonb OR ${sqlExpr} = 'null'::jsonb)`;
         }
-        return `(${sqlExpr} IS NULL OR ${sqlExpr}::text = '')`;
+        if (sqlType === 'text') {
+          return `(${sqlExpr} IS NULL OR ${sqlExpr} = '')`;
+        }
+        return `${sqlExpr} IS NULL`;
       }
 
       case 'is_not_empty': {
-        if (fieldType === 'multi_select' || fieldType === 'tags' || fieldType === 'file') {
-          return `(${sqlExpr} IS NOT NULL AND ${sqlExpr} != '[]'::jsonb)`;
+        if (sqlType === 'jsonb') {
+          return `(${sqlExpr} IS NOT NULL AND ${sqlExpr} != '[]'::jsonb AND ${sqlExpr} != 'null'::jsonb)`;
         }
-        return `(${sqlExpr} IS NOT NULL AND ${sqlExpr}::text != '')`;
+        if (sqlType === 'text') {
+          return `(${sqlExpr} IS NOT NULL AND ${sqlExpr} != '')`;
+        }
+        return `${sqlExpr} IS NOT NULL`;
       }
 
       case 'is_true': {
@@ -244,7 +333,7 @@ export class FilterCompiler {
         }
         if (value.length === 0) return '1=0';
         const placeholder = this.addParam(value);
-        return `${sqlExpr} = ANY(${placeholder})`;
+        return `${sqlExpr} = ANY(${placeholder}${arrayCast(sqlType)})`;
       }
 
       case 'not_in': {
@@ -253,7 +342,7 @@ export class FilterCompiler {
         }
         if (value.length === 0) return '1=1';
         const placeholder = this.addParam(value);
-        return `(${sqlExpr} IS NULL OR NOT (${sqlExpr} = ANY(${placeholder})))`;
+        return `(${sqlExpr} IS NULL OR NOT (${sqlExpr} = ANY(${placeholder}${arrayCast(sqlType)})))`;
       }
 
       case 'before': {
@@ -274,21 +363,21 @@ export class FilterCompiler {
         if (!Array.isArray(value)) throw new ValidationError('has_any requires an array');
         if (value.length === 0) return '1=0';
         const placeholder = this.addParam(value);
-        return `${sqlExpr} ?| ${placeholder}`;
+        return `${sqlExpr} ?| ${placeholder}::text[]`;
       }
 
       case 'has_all': {
         if (!Array.isArray(value)) throw new ValidationError('has_all requires an array');
         if (value.length === 0) return '1=1';
         const placeholder = this.addParam(value);
-        return `${sqlExpr} ?& ${placeholder}`;
+        return `${sqlExpr} ?& ${placeholder}::text[]`;
       }
 
       case 'has_none': {
         if (!Array.isArray(value)) throw new ValidationError('has_none requires an array');
         if (value.length === 0) return '1=1';
         const placeholder = this.addParam(value);
-        return `NOT (${sqlExpr} ?| ${placeholder})`;
+        return `NOT (${sqlExpr} ?| ${placeholder}::text[])`;
       }
 
       default:
@@ -296,76 +385,131 @@ export class FilterCompiler {
     }
   }
 
+  /**
+   * Relative date tokens.
+   *
+   * Plan Section 8: "`within` takes a relative token rather than a date, so a
+   * saved view stays correct tomorrow." The boundaries are computed in the
+   * org's timezone, not the server's — "today" for a Kolkata team on a UTC box
+   * is otherwise off by five and a half hours, which silently drops or adds a
+   * day's worth of follow-ups.
+   */
+
+  /**
+   * Rejects a value whose shape the bound parameter's type cannot accept.
+   *
+   * Without this, `{field:'owner_id', op:'in', value:['oops']}` reaches
+   * Postgres, raises 22P02 and fails the entire list query. The value is also
+   * normalised here (numeric strings to numbers) so a filter built by a form
+   * does not depend on the client's JSON types.
+   */
+  private assertValueShape(
+    field: string,
+    sqlType: string,
+    op: FilterOperator,
+    value: unknown,
+  ): unknown {
+    const needsNoValue: FilterOperator[] = ['is_empty', 'is_not_empty', 'is_true', 'is_false'];
+    if (needsNoValue.includes(op)) return value;
+
+    // `within` carries a relative token ('today', 'this_quarter'), not a date,
+    // so it is validated against the token table in compileWithin instead.
+    if (op === 'within') return value;
+
+    const check = (v: unknown): unknown => {
+      if (v === null || v === undefined) return v;
+      switch (sqlType) {
+        case 'uuid':
+          if (typeof v !== 'string' || !UUID_RE.test(v)) {
+            throw new ValidationError(`"${field}" expects an id`, [
+              { field: 'filter', message: `"${field}" expects an id` },
+            ]);
+          }
+          return v;
+        case 'numeric': {
+          const n = typeof v === 'number' ? v : Number(v);
+          if (!Number.isFinite(n)) {
+            throw new ValidationError(`"${field}" expects a number`, [
+              { field: 'filter', message: `"${field}" expects a number` },
+            ]);
+          }
+          return n;
+        }
+        case 'boolean':
+          if (typeof v === 'boolean') return v;
+          if (v === 'true' || v === 'false') return v === 'true';
+          throw new ValidationError(`"${field}" expects true or false`, [
+            { field: 'filter', message: `"${field}" expects true or false` },
+          ]);
+        case 'date':
+        case 'timestamptz': {
+          if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(v)) {
+            throw new ValidationError(`"${field}" expects a date`, [
+              { field: 'filter', message: `"${field}" expects a date` },
+            ]);
+          }
+          const parsed = new Date(v);
+          if (Number.isNaN(parsed.getTime())) {
+            throw new ValidationError(`"${field}" expects a valid date`, [
+              { field: 'filter', message: `"${field}" expects a valid date` },
+            ]);
+          }
+          return v;
+        }
+        default:
+          if (typeof v === 'object') {
+            throw new ValidationError(`"${field}" expects a text value`, [
+              { field: 'filter', message: `"${field}" expects a text value` },
+            ]);
+          }
+          return typeof v === 'string' ? v : String(v);
+      }
+    };
+
+    // jsonb containment operators compare against option ids, always text.
+    if (op === 'has_any' || op === 'has_all' || op === 'has_none') {
+      if (!Array.isArray(value)) {
+        throw new ValidationError(`"${op}" requires an array`, [
+          { field: 'filter', message: `"${op}" requires an array` },
+        ]);
+      }
+      return value.map((v) => String(v));
+    }
+
+    return Array.isArray(value) ? value.map(check) : check(value);
+  }
+
   private compileWithin(sqlExpr: string, token: unknown): string {
-    const now = new Date();
     const str = String(token);
-
-    if (str === 'today') {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      const p1 = this.addParam(start.toISOString());
-      const p2 = this.addParam(end.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
+    const window = WITHIN_TOKENS[str];
+    if (!window) {
+      throw new ValidationError(`Invalid "within" token: ${str}`, [
+        { field: 'filter', message: `Unknown date range "${str}"` },
+      ]);
     }
 
-    if (str === 'yesterday') {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
-      const p1 = this.addParam(start.toISOString());
-      const p2 = this.addParam(end.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
-    }
+    const tz = this.addParam(this.timezone);
 
-    if (str === 'this_week') {
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-      const start = new Date(now.setDate(diff));
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
-      const p1 = this.addParam(start.toISOString());
-      const p2 = this.addParam(end.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
+    if (window.kind === 'before') {
+      return `${sqlExpr} < ${window.lower(tz)}`;
     }
-
-    if (str === 'last_7_days') {
-      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const p1 = this.addParam(start.toISOString());
-      const p2 = this.addParam(now.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
+    if (window.kind === 'after') {
+      return `${sqlExpr} >= ${window.lower(tz)}`;
     }
+    return `${sqlExpr} >= ${window.lower(tz)} AND ${sqlExpr} < ${window.upper!(tz)}`;
+  }
 
-    if (str === 'next_7_days') {
-      const end = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const p1 = this.addParam(now.toISOString());
-      const p2 = this.addParam(end.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
+  private resolveMe(value: unknown): unknown {
+    if (value === '@me') {
+      if (!this.currentUserId) {
+        throw new ValidationError('Cannot resolve @me without an authenticated user');
+      }
+      return this.currentUserId;
     }
-
-    if (str === 'this_month') {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      const p1 = this.addParam(start.toISOString());
-      const p2 = this.addParam(end.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
+    if (Array.isArray(value)) {
+      return value.map((v) => (v === '@me' ? this.resolveMe(v) : v));
     }
-
-    if (str === 'last_month') {
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-      const p1 = this.addParam(start.toISOString());
-      const p2 = this.addParam(end.toISOString());
-      return `${sqlExpr} >= ${p1} AND ${sqlExpr} <= ${p2}`;
-    }
-
-    if (str === 'overdue') {
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      const p1 = this.addParam(todayStart.toISOString());
-      return `${sqlExpr} < ${p1}`;
-    }
-
-    throw new ValidationError(`Invalid "within" token: ${str}`);
+    return value;
   }
 
   private addParam(val: unknown): string {

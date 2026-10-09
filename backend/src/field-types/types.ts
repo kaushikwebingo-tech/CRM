@@ -9,7 +9,7 @@ export type FilterOperator =
   | 'has_any' | 'has_all' | 'has_none'
   | 'is_empty' | 'is_not_empty';
 
-export type SqlCastType = 'text' | 'numeric' | 'boolean' | 'timestamptz' | 'uuid' | 'jsonb';
+export type SqlCastType = 'text' | 'numeric' | 'boolean' | 'date' | 'timestamptz' | 'uuid' | 'jsonb';
 
 export interface FieldTypeDef<TConfig = unknown, TValue = unknown> {
   key: string;

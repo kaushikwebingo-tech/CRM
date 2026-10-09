@@ -22,9 +22,10 @@ export class RecordsController {
     @CurrentOrg() orgId: string,
     @Param('key') moduleKey: string,
     @Query('filter') filter: string,
+    @Query('q') q: string,
     @CurrentUser() currentUser: CurrentUserPayload
   ) {
-    return this.recordsService.count(orgId, moduleKey, filter, currentUser);
+    return this.recordsService.count(orgId, moduleKey, filter, currentUser, q);
   }
 
   @Post()
@@ -79,9 +80,10 @@ export class RecordsController {
   async getById(
     @CurrentOrg() orgId: string,
     @Param('key') moduleKey: string,
-    @Param('id') recordId: string
+    @Param('id') recordId: string,
+    @CurrentUser() currentUser: CurrentUserPayload
   ) {
-    return this.recordsService.findById(orgId, moduleKey, recordId);
+    return this.recordsService.findById(orgId, moduleKey, recordId, currentUser);
   }
 
   @Patch(':id')
@@ -111,9 +113,10 @@ export class RecordsController {
   async getTimeline(
     @CurrentOrg() orgId: string,
     @Param('key') moduleKey: string,
-    @Param('id') recordId: string
+    @Param('id') recordId: string,
+    @CurrentUser() currentUser: CurrentUserPayload
   ) {
-    return this.recordsService.getTimeline(orgId, moduleKey, recordId);
+    return this.recordsService.getTimeline(orgId, moduleKey, recordId, currentUser);
   }
 
   @Post(':id/notes')

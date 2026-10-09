@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeNumber, importCell } from '../shared';
 
 const configSchema = z.object({});
 
@@ -15,21 +16,17 @@ export const percentField: FieldTypeDef<Config, number> = {
   group: 'basic',
   configSchema,
   valueSchema() {
-    return z.number();
+    return z.number().min(0).max(100);
   },
   sqlType: 'numeric',
   operators: NUMBER_OPERATORS,
   normalize(input) {
-    if (input == null || input === '') return null;
-    const num = Number(input);
-    if (Number.isNaN(num)) return null;
-    return num;
+    return normalizeNumber(input, { min: 0, max: 100, precision: 2 });
   },
   toSearchText(value) { return String(value); },
   toExportString(value) { return String(value); },
   parseImport(raw) {
-    const num = Number(raw.replace(/[^0-9.-]+/g, ''));
-    return Number.isNaN(num) ? null : num;
+    return normalizeNumber(importCell(raw).replace(/%$/, ''), { min: 0, max: 100, precision: 2 });
   },
   formComponent: 'PercentInput',
   cellComponent: 'PercentCell',

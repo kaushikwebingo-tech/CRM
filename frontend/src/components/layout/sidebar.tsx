@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
-import { Box, Users, Zap, Shield, Layers, Menu, Package2, type LucideIcon, icons } from 'lucide-react';
+import { Users, Zap, Shield, Layers, Menu, Package2, type LucideIcon } from 'lucide-react';
+import { resolveModuleIcon } from '@/lib/module-icons';
 import { useUiStore } from '@/stores/ui';
 import { useSchema } from '@/hooks/use-schema';
 import { cn } from '@/lib/utils';
@@ -9,11 +10,9 @@ export function Sidebar(): JSX.Element {
   const { sidebarOpen, toggleSidebar } = useUiStore();
   const { modules } = useSchema();
 
-  const getIcon = (iconName: string | null): LucideIcon => {
-    if (!iconName) return Box;
-    const IconComponent = (icons as Record<string, LucideIcon>)[iconName];
-    return IconComponent || Box;
-  };
+  // Resolved from a bounded set rather than lucide's full icon map, which used
+  // to put every icon in the bundle (see lib/module-icons).
+  const getIcon = (iconName: string | null): LucideIcon => resolveModuleIcon(iconName);
 
   return (
     <aside

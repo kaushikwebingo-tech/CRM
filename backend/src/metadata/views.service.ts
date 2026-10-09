@@ -3,22 +3,62 @@ import { DATABASE } from '../db/connection';
 import { views } from '../db/schema';
 import { eq, and, isNull, asc } from 'drizzle-orm';
 import { NotFoundError } from '../common/errors';
+import { z } from 'zod';
+
+/** Only these columns may come from a request body. */
+const viewSchema = z.object({
+  name: z.string().min(1).max(120),
+  type: z.enum(['table', 'kanban', 'calendar']).optional(),
+  config: z.record(z.unknown()).optional(),
+  position: z.number().int().min(0).max(10_000).optional(),
+  isShared: z.boolean().optional(),
+});
 
 @Injectable()
 export class ViewsService {
   constructor(@Inject(DATABASE) private readonly db: any) {}
 
   async list(orgId: string, moduleId: string) {
-    return this.db.select().from(views).where(and(eq(views.moduleId, moduleId), isNull(views.deletedAt))).orderBy(asc(views.position));
+    // orgId was accepted and then not used, so a known module id from another
+    // organisation would list its views.
+    return this.db
+      .select()
+      .from(views)
+      .where(and(eq(views.orgId, orgId), eq(views.moduleId, moduleId), isNull(views.deletedAt)))
+      .orderBy(asc(views.position));
   }
 
-  async create(orgId: string, moduleId: string, data: any) {
-    const [view] = await this.db.insert(views).values({ orgId, moduleId, ...data }).returning();
+  async create(orgId: string, moduleId: string, input: unknown, ownerId?: string | null) {
+    const data = viewSchema.parse(input ?? {});
+    const [view] = await this.db
+      .insert(views)
+      .values({
+        orgId,
+        moduleId,
+        name: data.name,
+        type: data.type ?? 'table',
+        config: data.config ?? {},
+        // null means shared with the org (Plan Section 4).
+        ownerId: data.isShared ? null : (ownerId ?? null),
+        isDefault: false,
+        position: data.position ?? 0,
+      })
+      .returning();
     return view;
   }
 
-  async update(orgId: string, viewId: string, data: any) {
-    const [view] = await this.db.update(views).set(data).where(and(eq(views.id, viewId), eq(views.orgId, orgId))).returning();
+  async update(orgId: string, viewId: string, input: unknown) {
+    const data = viewSchema.partial().parse(input ?? {});
+    const [view] = await this.db
+      .update(views)
+      .set({
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.type !== undefined && { type: data.type }),
+        ...(data.config !== undefined && { config: data.config }),
+        ...(data.position !== undefined && { position: data.position }),
+      })
+      .where(and(eq(views.id, viewId), eq(views.orgId, orgId), isNull(views.deletedAt)))
+      .returning();
     if (!view) throw new NotFoundError('View not found');
     return view;
   }

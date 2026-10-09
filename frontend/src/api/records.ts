@@ -1,4 +1,4 @@
-import { api } from '@/api/client';
+import { api, newIdempotencyKey } from '@/api/client';
 
 export interface RecordItem {
   id: string;
@@ -10,8 +10,10 @@ export interface RecordItem {
   stage_id: string | null;
   stage_since: string | null;
   data: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  created_at?: string;
+  updated_at?: string;
   owner?: {
     id: string;
     fullName: string;
@@ -24,7 +26,13 @@ export interface RecordListResponse {
   records: RecordItem[];
   nextCursor: string | null;
   hasMore: boolean;
-  schemaVersion: number;
+  schemaVersion: number | string;
+}
+
+export interface RecordCountResponse {
+  count: number;
+  /** True when the number is the planner's estimate (Plan Section 14). */
+  approximate?: boolean;
 }
 
 export interface RecordListParams {
@@ -33,20 +41,28 @@ export interface RecordListParams {
   filter?: string;
   q?: string;
   limit?: number;
+  /**
+   * The field keys the view actually displays.
+   *
+   * Plan Section 14, "Select what is needed": a list view asks for six columns
+   * instead of a forty-key data blob, and "the table view sends this
+   * automatically from the view's column config".
+   */
+  fields?: string[];
 }
 
 export function fetchRecords(
   moduleKey: string,
   params?: RecordListParams
 ): Promise<RecordListResponse> {
-  const queryParams: Record<string, string> = {};
-  if (params?.cursor) queryParams.cursor = params.cursor;
-  if (params?.sort) queryParams.sort = params.sort;
-  if (params?.filter) queryParams.filter = params.filter;
-  if (params?.q) queryParams.q = params.q;
-  if (params?.limit) queryParams.limit = String(params.limit);
-
-  return api.get<RecordListResponse>(`/api/modules/${moduleKey}/records`, queryParams);
+  return api.get<RecordListResponse>(`/api/modules/${moduleKey}/records`, {
+    cursor: params?.cursor,
+    sort: params?.sort,
+    filter: params?.filter,
+    q: params?.q,
+    limit: params?.limit,
+    fields: params?.fields && params.fields.length > 0 ? params.fields.join(',') : undefined,
+  });
 }
 
 export function fetchRecord(moduleKey: string, id: string): Promise<RecordItem> {
@@ -61,9 +77,15 @@ export function createRecord(
     stage_id?: string;
     pipeline_id?: string;
     data?: Record<string, unknown>;
-  }
+  },
+  idempotencyKey?: string
 ): Promise<RecordItem> {
-  return api.post<RecordItem>(`/api/modules/${moduleKey}/records`, body);
+  // A double-clicked Save or a retried request replays the same key, and the
+  // API returns the original response instead of creating a second record
+  // (Guardrail 12).
+  return api.post<RecordItem>(`/api/modules/${moduleKey}/records`, body, {
+    'Idempotency-Key': idempotencyKey ?? newIdempotencyKey(),
+  });
 }
 
 export function updateRecord(
@@ -94,10 +116,12 @@ export function changeStage(
 
 export function fetchRecordCount(
   moduleKey: string,
-  filter?: string
-): Promise<{ count: number }> {
-  const params = filter ? { filter } : undefined;
-  return api.get<{ count: number }>(`/api/modules/${moduleKey}/records/count`, params);
+  filter?: string,
+  q?: string,
+): Promise<RecordCountResponse> {
+  // `q` is passed so the header count matches the list the user is looking at;
+  // the endpoint previously ignored it and the two disagreed.
+  return api.get<RecordCountResponse>(`/api/modules/${moduleKey}/records/count`, { filter, q });
 }
 
 export interface TimelineEvent {

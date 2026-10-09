@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeText, importCell } from '../shared';
 
 const configSchema = z.object({
   maxLength: z.number().int().min(1).max(50000).optional(),
@@ -23,13 +24,12 @@ export const longTextField: FieldTypeDef<Config, string> = {
   },
   sqlType: 'text',
   operators: TEXT_OPERATORS,
-  normalize(input) {
-    if (input == null || input === '') return null;
-    return String(input).trim();
+  normalize(input, config) {
+    return normalizeText(input, config?.maxLength);
   },
   toSearchText(value) { return value; },
   toExportString(value) { return value; },
-  parseImport(raw) { return raw.trim() || null; },
+  parseImport(raw, config) { return normalizeText(importCell(raw), config?.maxLength); },
   formComponent: 'TextareaInput',
   cellComponent: 'LongTextCell',
   filterComponent: 'TextFilter',

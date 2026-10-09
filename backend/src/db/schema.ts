@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, jsonb, timestamp, boolean, integer, numeric, bigserial, uniqueIndex, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, jsonb, timestamp, boolean, integer, numeric, bigint, bigserial, uniqueIndex, index, unique } from 'drizzle-orm/pg-core';
 import { isNull, sql } from 'drizzle-orm';
 
 export const organizations = pgTable('organizations', {
@@ -236,4 +236,51 @@ export const templates = pgTable('templates', {
   variables: jsonb('variables').default([]).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
+});
+
+
+export const adminAudit = pgTable('admin_audit', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  orgId: uuid('org_id').notNull(),
+  actorId: uuid('actor_id'),
+  actorType: text('actor_type').notNull().default('user'),
+  entityType: text('entity_type').notNull(),
+  entityId: text('entity_id'),
+  action: text('action').notNull(),
+  before: jsonb('before'),
+  after: jsonb('after'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+
+export const fieldSequences = pgTable('field_sequences', {
+  orgId: uuid('org_id').notNull(),
+  fieldId: uuid('field_id').notNull(),
+  nextValue: bigint('next_value', { mode: 'number' }).notNull().default(1),
+});
+
+
+export const idempotencyKeys = pgTable('idempotency_keys', {
+  orgId: uuid('org_id').notNull(),
+  key: text('key').notNull(),
+  endpoint: text('endpoint').notNull(),
+  requestHash: text('request_hash').notNull(),
+  statusCode: integer('status_code').notNull(),
+  response: jsonb('response'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+
+export const teams = pgTable('teams', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+});
+
+export const teamMembers = pgTable('team_members', {
+  orgId: uuid('org_id').notNull(),
+  teamId: uuid('team_id').notNull(),
+  userId: uuid('user_id').notNull(),
 });

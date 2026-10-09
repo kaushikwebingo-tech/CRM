@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeNumber, importCell } from '../shared';
 
 const configSchema = z.object({
   currencyCode: z.string().length(3).default('USD'),
@@ -22,16 +23,12 @@ export const currencyField: FieldTypeDef<Config, number> = {
   sqlType: 'numeric',
   operators: CURRENCY_OPERATORS,
   normalize(input) {
-    if (input == null || input === '') return null;
-    const num = Number(input);
-    if (Number.isNaN(num)) return null;
-    return num;
+    return normalizeNumber(input, { precision: 2 });
   },
   toSearchText(value) { return String(value); },
   toExportString(value) { return String(value); },
   parseImport(raw) {
-    const num = Number(raw.replace(/[^0-9.-]+/g, ''));
-    return Number.isNaN(num) ? null : num;
+    return normalizeNumber(importCell(raw), { precision: 2 });
   },
   formComponent: 'CurrencyInput',
   cellComponent: 'CurrencyCell',

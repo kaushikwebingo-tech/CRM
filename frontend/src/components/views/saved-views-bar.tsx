@@ -21,6 +21,8 @@ export interface SavedViewsBarProps {
   currentFilter?: Record<string, unknown>;
   currentSort?: string;
   currentType?: 'table' | 'kanban';
+  isSaveModalOpen?: boolean;
+  onSaveModalOpenChange?: (open: boolean) => void;
 }
 
 export function SavedViewsBar({
@@ -30,12 +32,22 @@ export function SavedViewsBar({
   currentFilter,
   currentSort,
   currentType = 'table',
+  isSaveModalOpen,
+  onSaveModalOpenChange,
 }: SavedViewsBarProps): JSX.Element {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const confirm = useConfirm();
-  const [modalOpen, setModalOpen] = useState(false);
+  const [internalModalOpen, setInternalModalOpen] = useState(false);
   const [viewName, setViewName] = useState('');
+
+  const modalOpen = isSaveModalOpen !== undefined ? isSaveModalOpen : internalModalOpen;
+  const setModalOpen = (val: boolean) => {
+    if (onSaveModalOpenChange) {
+      onSaveModalOpenChange(val);
+    }
+    setInternalModalOpen(val);
+  };
 
   const { data: views = [] } = useQuery({
     queryKey: ['views', moduleKey],

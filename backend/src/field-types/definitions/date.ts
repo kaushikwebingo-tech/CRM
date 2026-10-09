@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeDate, importCell } from '../shared';
 
 const configSchema = z.object({});
 
@@ -17,23 +18,15 @@ export const dateField: FieldTypeDef<Config, string> = {
   valueSchema() {
     return z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
   },
-  sqlType: 'timestamptz',
+  sqlType: 'date',
   operators: DATE_OPERATORS,
   normalize(input) {
-    if (!input) return null;
-    if (typeof input === 'string') {
-      const match = input.match(/^\d{4}-\d{2}-\d{2}/);
-      if (match) return match[0];
-      const d = new Date(input);
-      if (!Number.isNaN(d.getTime())) return d.toISOString().split('T')[0];
-    }
-    return null;
+    return normalizeDate(input);
   },
   toSearchText(value) { return value; },
   toExportString(value) { return value; },
   parseImport(raw) {
-    const d = new Date(raw.trim());
-    return Number.isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+    return normalizeDate(importCell(raw));
   },
   formComponent: 'DateInput',
   cellComponent: 'DateCell',

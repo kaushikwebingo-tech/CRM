@@ -31,6 +31,11 @@ export class AuthController {
     if (!isValid) {
       throw new UnauthorizedException();
     }
+    // A deactivated account could still sign in: nothing checked is_active on
+    // the login path either.
+    if (user.isActive === false) {
+      throw new UnauthorizedException();
+    }
     const sessionId = await this.sessionService.createSession(user.id, user.orgId);
     res.cookie('crm.sid', sessionId, {
       httpOnly: true,

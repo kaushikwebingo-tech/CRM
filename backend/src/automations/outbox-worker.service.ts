@@ -6,6 +6,7 @@ import { REDIS } from '../auth/session.service';
 import { AutomationsService } from './automations.service';
 import { getActionHandler } from './actions/action-registry';
 import { ActionContext, DomainEvent } from './automations.types';
+import { matchesConditions } from './conditions';
 
 @Injectable()
 export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
@@ -20,8 +21,15 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly automationsService: AutomationsService
   ) {}
 
+  
+  private jsonb(value: unknown): string {
+    return JSON.stringify(value ?? null);
+  }
+
   async onModuleInit() {
-    this.start();
+    if (process.env.RUN_OUTBOX_WORKER_IN_API === 'true') {
+      this.start();
+    }
   }
 
   async onModuleDestroy() {
@@ -90,9 +98,26 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private async reclaimStalled(): Promise<void> {
+    try {
+      await this.sql`
+        UPDATE outbox_events
+        SET status = 'pending', last_error = COALESCE(last_error, 'reclaimed after worker restart')
+        WHERE status = 'processing'
+          AND created_at < now() - interval '5 minutes'
+      `;
+    } catch {
+      // best effort
+    }
+  }
+
   private async pollLoop(): Promise<void> {
+    await this.reclaimStalled();
+    let ticks = 0;
+
     while (this.isRunning) {
       try {
+        if (++ticks % 600 === 0) await this.reclaimStalled();
         const processedCount = await this.processBatch(5);
         if (!this.isRunning) break;
         if (processedCount > 0) {
@@ -108,26 +133,24 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async processBatch(concurrency = 5): Promise<number> {
-    const events = await this.sql<any[]>`
-      SELECT *
-      FROM outbox_events
-      WHERE status = 'pending'
-        AND available_at <= now()
-      ORDER BY id ASC
-      LIMIT ${concurrency}
-      FOR UPDATE SKIP LOCKED
+   const events = await this.sql<any[]>`
+      UPDATE outbox_events
+      SET status = 'processing', attempts = attempts
+      WHERE id IN (
+        SELECT id
+        FROM outbox_events
+        WHERE status = 'pending'
+          AND available_at <= now()
+        ORDER BY id ASC
+        LIMIT ${concurrency}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
     `;
 
     if (!events || events.length === 0) {
       return 0;
     }
-
-    const eventIds = events.map((e) => e.id);
-    await this.sql`
-      UPDATE outbox_events
-      SET status = 'processing'
-      WHERE id IN ${this.sql(eventIds)}
-    `;
 
     await Promise.allSettled(
       events.map((event) => this.processSingleEvent(event))
@@ -215,7 +238,11 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
       matchingAutomations = await this.automationsService.getMatchingAutomations(
         event.org_id,
         event.event_type,
-        moduleKey
+        moduleKey,
+        domainEvent.changes ? Object.keys(domainEvent.changes) : undefined,
+      );
+      matchingAutomations = matchingAutomations.filter((auto) =>
+        matchesConditions(auto.conditions, currentRecord, domainEvent),
       );
     } catch (err: any) {
       await this.handleEventFailure(event, err.message || 'Failed to query automations');
@@ -225,7 +252,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
     if (matchingAutomations.length === 0) {
       await this.sql`
         UPDATE outbox_events
-        SET status = 'completed', processed_at = now()
+        SET status = 'done', processed_at = now()
         WHERE id = ${event.id}
       `;
       return;
@@ -250,7 +277,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
             ${auto.id},
             ${recordId || null},
             'skipped',
-            ${JSON.stringify({ reason: 'Loop protection: automation already in causation chain' })}::jsonb,
+            ${this.jsonb({ reason: 'Loop protection: automation already in causation chain' })}::text::jsonb,
             now(),
             now()
           )
@@ -275,7 +302,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
             ${auto.id},
             ${recordId || null},
             'failed',
-            ${JSON.stringify({ error: lastErrorMessage })}::jsonb,
+            ${this.jsonb({ error: lastErrorMessage })}::text::jsonb,
             now(),
             now()
           )
@@ -307,7 +334,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
                 ${auto.id},
                 ${recordId || null},
                 'failed',
-                ${JSON.stringify({ error: lastErrorMessage })}::jsonb,
+                ${this.jsonb({ error: lastErrorMessage })}::text::jsonb,
                 now(),
                 now()
               )
@@ -352,7 +379,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
           SET
             status = 'success',
             finished_at = now(),
-            log = ${JSON.stringify({ results: actionResults })}::jsonb
+            log = ${this.jsonb({ results: actionResults })}::text::jsonb
           WHERE id = ${runRecord.id}
         `;
       } catch (err: any) {
@@ -364,10 +391,10 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
           SET
             status = 'failed',
             finished_at = now(),
-            log = ${JSON.stringify({
+            log = ${this.jsonb({
               error: lastErrorMessage,
               attempt: (event.attempts || 0) + 1,
-            })}::jsonb
+            })}::text::jsonb
           WHERE id = ${runRecord.id}
         `;
       }
@@ -376,7 +403,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
     if (!hasFailure) {
       await this.sql`
         UPDATE outbox_events
-        SET status = 'completed', processed_at = now()
+        SET status = 'done', processed_at = now()
         WHERE id = ${event.id}
       `;
     } else {
@@ -386,11 +413,11 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private async handleEventFailure(event: any, errorMessage: string): Promise<void> {
     const nextAttempts = (event.attempts || 0) + 1;
-    const delays = [1000, 2000, 10000, 60000, 300000];
-    const delayMs = delays[nextAttempts - 1] || 1800000;
+    const delays = [1_000, 10_000, 60_000, 300_000, 1_800_000];
+    const delayMs = delays[nextAttempts - 1] ?? 1_800_000;
     const nextAvailableAt = new Date(Date.now() + delayMs);
 
-    if (nextAttempts >= 5) {
+    if (nextAttempts > delays.length) {
       await this.sql`
         UPDATE outbox_events
         SET

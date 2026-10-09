@@ -9,6 +9,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ModuleDef } from '@/api/schema';
 import { RecordItem } from '@/api/records';
 import { getFieldComponent } from '@/components/fields/registry';
+import { CellBoundary } from '@/components/error-boundary';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowUpDown, ArrowUp, ArrowDown, Trash2, Edit2 } from 'lucide-react';
@@ -16,6 +17,14 @@ import { ArrowUpDown, ArrowUp, ArrowDown, Trash2, Edit2 } from 'lucide-react';
 export interface DynamicTableProps {
   module: ModuleDef;
   records: RecordItem[];
+  /**
+   * The active view's `config.columns`. Plan Section 4 stores columns on the
+   * view and Section 14 expects the grid to ask for only those; the table used
+   * to render every non-system field regardless, so a saved view's column
+   * choice did nothing and the Owner column was never shown at all.
+   */
+  columns?: string[];
+  error?: Error | null;
   isLoading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
@@ -30,6 +39,8 @@ export interface DynamicTableProps {
 export function DynamicTable({
   module,
   records,
+  columns: viewColumns,
+  error,
   isLoading,
   hasMore,
   onLoadMore,
@@ -159,33 +170,79 @@ export function DynamicTable({
       });
     }
 
-    const visibleFields = module.fields.filter(
-      (f) => !f.isSystem && f.key !== 'stage_id' && f.key !== 'owner_id'
-    );
+    // `stage_id` and `owner_id` are core record columns rendered above, not
+    // dynamic fields, so they are excluded here rather than duplicated.
+    const CORE_RENDERED = new Set(['stage_id', 'owner_id', 'display_name']);
+    const wantsOwner = !viewColumns || viewColumns.length === 0 || viewColumns.includes('owner_id');
+    const byKey = new Map(module.fields.map((f) => [f.key, f] as const));
+
+    const visibleFields =
+      viewColumns && viewColumns.length > 0
+        ? viewColumns
+            .filter((key) => !CORE_RENDERED.has(key))
+            .map((key) => byKey.get(key))
+            .filter((f): f is NonNullable<typeof f> => Boolean(f))
+        : module.fields.filter((f) => !f.isSystem && !CORE_RENDERED.has(f.key));
+
+    if (wantsOwner) {
+      cols.push({
+        id: 'owner_id',
+        accessorKey: 'owner_id',
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleHeaderSort('owner_id')}
+            className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+          >
+            <span>Owner</span>
+            {currentSortKey === 'owner_id' ? (
+              currentSortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />
+            ) : (
+              <ArrowUpDown className="h-3.5 w-3.5 text-slate-400" />
+            )}
+          </button>
+        ),
+        cell: ({ row }) =>
+          row.original.owner ? (
+            <span className="truncate text-slate-700">{row.original.owner.fullName}</span>
+          ) : (
+            <span className="text-slate-300">Unassigned</span>
+          ),
+        size: 140,
+      });
+    }
 
     for (const field of visibleFields) {
       cols.push({
         id: field.key,
         accessorFn: (row) => row.data?.[field.key],
-        header: () => (
-          <button
-            type="button"
-            onClick={() => handleHeaderSort(field.key)}
-            className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900 group"
-          >
-            <span>{field.label}</span>
-            {currentSortKey === field.key ? (
-              currentSortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />
-            ) : (
-              <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100" />
-            )}
-          </button>
-        ),
+        header: () =>
+          // A header that offers to sort an unsortable field just produces a
+          // 400 the user cannot act on, so it renders as plain text instead.
+          field.isSortable === false ? (
+            <span className="font-semibold text-slate-700">{field.label}</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleHeaderSort(field.key)}
+              className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900 group"
+            >
+              <span>{field.label}</span>
+              {currentSortKey === field.key ? (
+                currentSortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />
+              ) : (
+                <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100" />
+              )}
+            </button>
+          ),
         cell: ({ row }) => {
-          const ComponentSet = getFieldComponent(field.type);
-          const FieldCell = ComponentSet.Cell;
+          const FieldCell = getFieldComponent(field.type).Cell;
           const value = row.original.data?.[field.key];
-          return <FieldCell field={field} value={value} record={row.original} />;
+          return (
+            <CellBoundary>
+              <FieldCell field={field} value={value} record={row.original} />
+            </CellBoundary>
+          );
         },
         size: 160,
       });
@@ -209,15 +266,15 @@ export function DynamicTable({
         </button>
       ),
       cell: ({ row }) => {
-        try {
-          return (
-            <span className="text-slate-500 text-xs font-mono">
-              {new Date(row.original.createdAt).toLocaleDateString()}
-            </span>
-          );
-        } catch {
-          return <span className="text-slate-400">—</span>;
-        }
+        const rawDate = row.original.created_at || row.original.createdAt;
+        if (!rawDate) return <span className="text-slate-400">—</span>;
+        const parsed = new Date(rawDate);
+        if (Number.isNaN(parsed.getTime())) return <span className="text-slate-400">—</span>;
+        return (
+          <span className="text-slate-500 text-xs font-mono">
+            {parsed.toLocaleDateString()}
+          </span>
+        );
       },
       size: 110,
     });
@@ -251,7 +308,7 @@ export function DynamicTable({
     });
 
     return cols;
-  }, [module, currentSortKey, currentSortDir, onSelectRecord, onDeleteRecord, selectedIds, onSelectedIdsChange, records]);
+  }, [module, viewColumns, currentSortKey, currentSortDir, onSelectRecord, onDeleteRecord, selectedIds, onSelectedIdsChange, records]);
 
   const table = useReactTable({
     data: records,
@@ -277,6 +334,19 @@ export function DynamicTable({
             <div key={i} className="h-10 bg-slate-100 animate-pulse rounded" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error && records.length === 0) {
+    // A rejected request used to fall through to the empty state, so a
+    // permission error or a bad filter read as "you have no records".
+    return (
+      <div className="rounded-lg border border-rose-200 bg-rose-50/40 p-10 text-center">
+        <h3 className="text-sm font-semibold text-slate-900">
+          These {module.labelPlural.toLowerCase()} could not be loaded
+        </h3>
+        <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">{error.message}</p>
       </div>
     );
   }

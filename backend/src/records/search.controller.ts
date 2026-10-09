@@ -1,6 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { RecordsService } from './records.service';
-import { CurrentOrg } from '../common/decorators';
+import { CurrentOrg, CurrentUser } from '../common/decorators';
+import { CurrentUserPayload } from './records.service';
 
 @Controller('search')
 export class SearchController {
@@ -10,9 +11,9 @@ export class SearchController {
   async search(
     @CurrentOrg() orgId: string,
     @Query('q') query: string,
+    @CurrentUser() currentUser: CurrentUserPayload,
     @Query('limit') limit?: number
   ) {
-    const limitNum = Math.min(Math.max(Number(limit) || 20, 1), 50);
-    return this.recordsService.searchGlobal(orgId, query, limitNum);
+    return this.recordsService.searchGlobal(orgId, query, limit, currentUser);
   }
 }

@@ -32,6 +32,7 @@ export class AuthService {
       email: users.email,
       fullName: users.fullName,
       avatarUrl: users.avatarUrl,
+      isActive: users.isActive,
       roleId: roles.id,
       roleName: roles.name,
       rolePermissions: roles.permissions,
@@ -43,6 +44,7 @@ export class AuthService {
       email: row.email,
       fullName: row.fullName,
       avatarUrl: row.avatarUrl,
+      isActive: row.isActive,
       role: row.roleId ? {
         id: row.roleId,
         name: row.roleName,

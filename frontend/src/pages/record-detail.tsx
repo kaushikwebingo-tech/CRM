@@ -310,8 +310,19 @@ export function RecordDetail(): JSX.Element {
     e.target.value = '';
   };
 
-  const emailValue = String(formData.email || '');
-  const phoneValue = String(formData.phone || '');
+  /**
+   * Quick actions come from field TYPES, not field keys.
+   *
+   * This used to read `formData.email` and `formData.phone`, so the buttons
+   * only appeared on a module that happened to name its fields exactly that —
+   * a Guardrail 14 violation ("behaviour belongs to the field type"). Now the
+   * first email-typed field gives a mailto and the first phone-typed field a
+   * tel, for every module.
+   */
+  const emailField = moduleDef?.fields.find((f) => f.type === 'email');
+  const phoneField = moduleDef?.fields.find((f) => f.type === 'phone');
+  const emailValue = emailField ? String(formData[emailField.key] ?? '') : '';
+  const phoneValue = phoneField ? String(formData[phoneField.key] ?? '') : '';
 
   const notesList = timelineEvents.filter((ev) => ev.type === 'note');
   const attachmentsList = timelineEvents.filter((ev) => ev.type === 'attachment');
@@ -419,7 +430,7 @@ export function RecordDetail(): JSX.Element {
               <a
                 href={`mailto:${emailValue}`}
                 className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 bg-white text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors shadow-sm"
-                title={`Email ${emailValue}`}
+                title={`${emailField?.label ?? 'Email'}: ${emailValue}`}
               >
                 <Mail className="h-4 w-4" />
               </a>
@@ -429,7 +440,7 @@ export function RecordDetail(): JSX.Element {
               <a
                 href={`tel:${phoneValue}`}
                 className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 bg-white text-slate-600 hover:text-emerald-600 hover:border-emerald-300 transition-colors shadow-sm"
-                title={`Call ${phoneValue}`}
+                title={`${phoneField?.label ?? 'Phone'}: ${phoneValue}`}
               >
                 <Phone className="h-4 w-4" />
               </a>

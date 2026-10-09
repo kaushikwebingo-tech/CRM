@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { ModuleDef } from '@/api/schema';
+import { ApiError } from '@/api/client';
+import { buildFormSchema } from '@/lib/field-schema';
 import { getFieldComponent } from '@/components/fields/registry';
+import { CellBoundary } from '@/components/error-boundary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -33,16 +37,30 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
     ...(initialValues?.data || {}),
   };
 
+  // Plan Section 11: the resolver is built from field metadata at runtime, so
+  // a new field type validates without a frontend change.
+  const formSchema = useMemo(() => buildFormSchema(module), [module]);
+
   const {
     control,
     handleSubmit,
     register,
+    setError,
     formState: { errors },
   } = useForm({
     defaultValues,
+    resolver: zodResolver(formSchema as never),
   });
 
-  const sections = Array.from(new Set(module.fields.map((f) => f.section || 'General')));
+  // Sections appear in field order, so an admin's ordering in the builder is
+  // the ordering the form shows.
+  const sections = Array.from(
+    new Set(
+      [...module.fields]
+        .sort((a, b) => a.position - b.position)
+        .map((f) => f.section || 'General'),
+    ),
+  );
 
   const handleFormSubmit = async (formData: Record<string, any>) => {
     setServerError(null);
@@ -55,8 +73,20 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
         owner_id: owner_id || undefined,
         data: dynamicData,
       });
-    } catch (err: any) {
-      setServerError(err.message || 'An error occurred while saving.');
+    } catch (err: unknown) {
+      // The API returns RFC 7807 with a `fields` array keyed by field key
+      // (Plan Section 7). Mapping it back onto the inputs is the whole point of
+      // that contract; previously only a generic banner was shown.
+      if (err instanceof ApiError) {
+        const mapped = err.fieldErrors;
+        const keys = Object.keys(mapped);
+        for (const key of keys) {
+          setError(key as never, { type: 'server', message: mapped[key] });
+        }
+        setServerError(keys.length > 0 ? err.detail : err.detail || 'Could not save this record.');
+      } else {
+        setServerError(err instanceof Error ? err.message : 'An error occurred while saving.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -84,7 +114,7 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
           </label>
           <Input
             {...register('display_name', { required: `${module.nameFieldLabel || 'Name'} is required` })}
-            placeholder={`Enter ${module.nameFieldLabel.toLowerCase()}`}
+            placeholder={`Enter ${(module.nameFieldLabel || 'name').toLowerCase()}`}
             className={errors.display_name ? 'border-red-500' : ''}
           />
           {errors.display_name && (
@@ -148,18 +178,26 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
                         required: fieldDef.isRequired ? `${fieldDef.label} is required` : false,
                       }}
                       render={({ field, fieldState }) => (
-                        <FieldInput
-                          field={fieldDef}
-                          value={field.value}
-                          onChange={field.onChange}
-                          error={fieldState.error?.message}
-                          disabled={submitting}
-                        />
+                        <CellBoundary>
+                          <FieldInput
+                            field={fieldDef}
+                            value={field.value}
+                            onChange={field.onChange}
+                            error={fieldState.error?.message}
+                            disabled={submitting}
+                          />
+                        </CellBoundary>
                       )}
                     />
 
-                    {fieldDef.helpText && (
-                      <p className="mt-1 text-xs text-slate-500">{fieldDef.helpText}</p>
+                    {errors[fieldDef.key] ? (
+                      <p className="mt-1 text-xs text-rose-500">
+                        {String((errors as Record<string, { message?: string }>)[fieldDef.key]?.message ?? '')}
+                      </p>
+                    ) : (
+                      fieldDef.helpText && (
+                        <p className="mt-1 text-xs text-slate-500">{fieldDef.helpText}</p>
+                      )
                     )}
                   </div>
                 );

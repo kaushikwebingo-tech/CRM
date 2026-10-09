@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeDateTime, importCell } from '../shared';
 
 const configSchema = z.object({});
 
@@ -20,15 +21,12 @@ export const datetimeField: FieldTypeDef<Config, string> = {
   sqlType: 'timestamptz',
   operators: DATETIME_OPERATORS,
   normalize(input) {
-    if (!input) return null;
-    const d = new Date(String(input));
-    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    return normalizeDateTime(input);
   },
   toSearchText(value) { return value; },
   toExportString(value) { return value; },
   parseImport(raw) {
-    const d = new Date(raw.trim());
-    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    return normalizeDateTime(importCell(raw));
   },
   formComponent: 'DateTimeInput',
   cellComponent: 'DateTimeCell',

@@ -14,7 +14,9 @@ import {
 } from '@dnd-kit/core';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ModuleDef, StageDef } from '@/api/schema';
+import { ModuleDef, StageDef, FieldDef } from '@/api/schema';
+import { getFieldComponent } from '@/components/fields/registry';
+import { CellBoundary } from '@/components/error-boundary';
 import { RecordItem } from '@/api/records';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,18 +25,43 @@ import { Clock, User as UserIcon, Eye, EyeOff, GripVertical } from 'lucide-react
 export interface KanbanBoardProps {
   module: ModuleDef;
   records: RecordItem[];
+  /** From the kanban view's `config.cardFields`; falls back to module order. */
+  cardFields?: string[];
   onSelectRecord: (record: RecordItem) => void;
   onStageChange: (recordId: string, targetStageId: string) => Promise<void>;
 }
 
+/**
+ * Which fields a card shows.
+ *
+ * The card used to read `data.budget`, `data.company` and `data.source`
+ * directly and print a ₹ in front of the budget — three field keys and a
+ * currency hardcoded into a component, which Guardrails 13 and 14 exist to
+ * prevent: the same card is used by every module, and a "Site Visit" has none
+ * of those fields. The keys now come from the view's `cardFields` config, or
+ * from the first few non-system fields of the module, and each value is
+ * rendered by its own type's Cell component.
+ */
+function resolveCardFields(module: ModuleDef, cardFields?: string[]): FieldDef[] {
+  const byKey = new Map(module.fields.map((f) => [f.key, f] as const));
+  if (cardFields && cardFields.length > 0) {
+    return cardFields.map((k) => byKey.get(k)).filter((f): f is FieldDef => Boolean(f));
+  }
+  return module.fields.filter((f) => !f.isSystem).slice(0, 3);
+}
+
 function KanbanCard({
   record,
+  fields,
   onClick,
   isOverlay = false,
+  isTerminalStage = false,
 }: {
   record: RecordItem;
+  fields: FieldDef[];
   onClick?: () => void;
   isOverlay?: boolean;
+  isTerminalStage?: boolean;
 }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: record.id,
@@ -47,14 +74,17 @@ function KanbanCard({
     opacity: isDragging ? 0.3 : 1,
   };
 
-  const budget = record.data?.budget;
-  const company = record.data?.company;
-  const source = record.data?.source;
-
+  /**
+   * Plan Section 9: "days in stage stops accruing once a record reaches a
+   * terminal stage". It previously kept counting forever on won and lost
+   * cards, so a deal closed last year read "412d ago".
+   */
   const formatDaysInStage = (since: string | null) => {
-    if (!since) return null;
-    const diff = Date.now() - new Date(since).getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    if (!since || isTerminalStage) return null;
+    const parsed = new Date(since);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const days = Math.floor((Date.now() - parsed.getTime()) / (1000 * 60 * 60 * 24));
+    if (days < 0) return null;
     if (days === 0) return 'Today';
     if (days === 1) return '1d ago';
     return `${days}d ago`;
@@ -86,23 +116,22 @@ function KanbanCard({
         </button>
       </div>
 
-      {Boolean(company) && (
-        <p className="text-xs text-slate-500 mt-1 font-medium truncate">{String(company)}</p>
+      {fields.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {fields.map((field) => {
+            const value = record.data?.[field.key];
+            if (value === undefined || value === null || value === '') return null;
+            const Cell = getFieldComponent(field.type).Cell;
+            return (
+              <span key={field.key} className="inline-flex items-center gap-1 text-xs text-slate-600">
+                <CellBoundary>
+                  <Cell field={field} value={value} record={record} />
+                </CellBoundary>
+              </span>
+            );
+          })}
+        </div>
       )}
-
-      <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
-        {budget !== undefined && budget !== null && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            ₹{Number(budget).toLocaleString()}
-          </span>
-        )}
-
-        {Boolean(source) && (
-          <Badge variant="secondary" className="text-[10px] py-0 px-1.5 font-normal">
-            {String(source)}
-          </Badge>
-        )}
-      </div>
 
       <div className="flex items-center justify-between text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-100">
         <div className="flex items-center gap-1">
@@ -132,10 +161,14 @@ function KanbanCard({
 function KanbanColumn({
   stage,
   records,
+  cardFields,
+  totalField,
   onSelectRecord,
 }: {
   stage: StageDef;
   records: RecordItem[];
+  cardFields: FieldDef[];
+  totalField: FieldDef | null;
   onSelectRecord: (record: RecordItem) => void;
 }): JSX.Element {
   const { setNodeRef, isOver } = useDroppable({
@@ -143,12 +176,16 @@ function KanbanColumn({
     data: { stageId: stage.id },
   });
 
-  const totalBudget = useMemo(() => {
-    return records.reduce((acc, r) => {
-      const b = Number(r.data?.budget);
-      return !isNaN(b) ? acc + b : acc;
+  // The column total is whichever numeric field the module actually has, not a
+  // field named "budget".
+  const columnTotal = useMemo(() => {
+    if (!totalField) return null;
+    const sum = records.reduce((acc, r) => {
+      const value = Number(r.data?.[totalField.key]);
+      return Number.isFinite(value) ? acc + value : acc;
     }, 0);
-  }, [records]);
+    return sum > 0 ? sum : null;
+  }, [records, totalField]);
 
   const stageColorClass =
     stage.type === 'won'
@@ -191,9 +228,14 @@ function KanbanColumn({
             {stage.type.toUpperCase()}
           </Badge>
 
-          {totalBudget > 0 && (
-            <span className="font-semibold text-slate-700">
-              ₹{totalBudget.toLocaleString()}
+          {columnTotal !== null && totalField && (
+            <span className="font-semibold text-slate-700" title={totalField.label}>
+              <CellBoundary>
+                {(() => {
+                  const Cell = getFieldComponent(totalField.type).Cell;
+                  return <Cell field={totalField} value={columnTotal} record={{} as RecordItem} />;
+                })()}
+              </CellBoundary>
             </span>
           )}
         </div>
@@ -201,7 +243,13 @@ function KanbanColumn({
 
       <div className="flex-1 p-2.5 space-y-2.5 overflow-y-auto min-h-[450px] max-h-[calc(100vh-270px)]">
         {records.map((rec) => (
-          <KanbanCard key={rec.id} record={rec} onClick={() => onSelectRecord(rec)} />
+          <KanbanCard
+            key={rec.id}
+            record={rec}
+            fields={cardFields}
+            isTerminalStage={stage.type !== 'open'}
+            onClick={() => onSelectRecord(rec)}
+          />
         ))}
 
         {records.length === 0 && (
@@ -217,9 +265,20 @@ function KanbanColumn({
 export function KanbanBoard({
   module,
   records,
+  cardFields,
   onSelectRecord,
   onStageChange,
 }: KanbanBoardProps): JSX.Element {
+  const resolvedCardFields = useMemo(
+    () => resolveCardFields(module, cardFields),
+    [module, cardFields],
+  );
+  const totalField = useMemo(
+    () =>
+      module.fields.find((f) => ['currency', 'number', 'percent'].includes(f.type) && !f.isSystem) ??
+      null,
+    [module],
+  );
   const [showTerminalStages, setShowTerminalStages] = useState(true);
   const [activeRecord, setActiveRecord] = useState<RecordItem | null>(null);
 
@@ -339,6 +398,8 @@ export function KanbanBoard({
           <div className="flex items-start gap-4 min-w-max h-full">
             {visibleStages.map((stage) => (
               <KanbanColumn
+                cardFields={resolvedCardFields}
+                totalField={totalField}
                 key={stage.id}
                 stage={stage}
                 records={recordsByStage.get(stage.id) || []}
@@ -349,7 +410,7 @@ export function KanbanBoard({
         </div>
 
         <DragOverlay>
-          {activeRecord ? <KanbanCard record={activeRecord} isOverlay /> : null}
+          {activeRecord ? <KanbanCard record={activeRecord} fields={resolvedCardFields} isOverlay /> : null}
         </DragOverlay>
       </DndContext>
     </div>

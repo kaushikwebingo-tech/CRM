@@ -1,4 +1,6 @@
-export function parseCsv(text: string): string[][] {
+export function parseCsv(input: string): string[][] {
+  const text = typeof input === 'string' ? input.replace(/^\uFEFF/, '') : '';
+
   const rows: string[][] = [];
   let currentRow: string[] = [];
   let currentField = '';
@@ -69,18 +71,24 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.length > 0 && !(r.length === 1 && r[0].trim() === ''));
 }
 
+
+const FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r'];
+
+function escapeCsvCell(cell: unknown): string {
+  const str = cell === null || cell === undefined ? '' : String(cell);
+  const guarded = FORMULA_PREFIXES.some((p) => str.startsWith(p)) ? `\t${str}` : str;
+  if (
+    guarded.includes(',') ||
+    guarded.includes('"') ||
+    guarded.includes('\n') ||
+    guarded.includes('\r') ||
+    guarded.startsWith('\t')
+  ) {
+    return `"${guarded.replace(/"/g, '""')}"`;
+  }
+  return guarded;
+}
+
 export function stringifyCsv(rows: string[][]): string {
-  return rows
-    .map((row) =>
-      row
-        .map((cell) => {
-          const str = cell ?? '';
-          if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-            return `"${str.replace(/"/g, '""')}"`;
-          }
-          return str;
-        })
-        .join(',')
-    )
-    .join('\r\n');
+  return rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n');
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeNumber, importCell } from '../shared';
 
 const configSchema = z.object({
   precision: z.number().int().min(0).max(10).optional(),
@@ -21,17 +22,13 @@ export const numberField: FieldTypeDef<Config, number> = {
   },
   sqlType: 'numeric',
   operators: NUMBER_OPERATORS,
-  normalize(input) {
-    if (input == null || input === '') return null;
-    const num = Number(input);
-    if (Number.isNaN(num)) return null;
-    return num;
+  normalize(input, config) {
+    return normalizeNumber(input, { precision: config?.precision });
   },
   toSearchText(value) { return String(value); },
   toExportString(value) { return String(value); },
-  parseImport(raw) {
-    const num = Number(raw.trim());
-    return Number.isNaN(num) ? null : num;
+  parseImport(raw, config) {
+    return normalizeNumber(importCell(raw), { precision: config?.precision });
   },
   formComponent: 'NumberInput',
   cellComponent: 'NumberCell',

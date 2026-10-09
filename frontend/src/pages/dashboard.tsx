@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/use-auth';
 import { useSchema } from '@/hooks/use-schema';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
-import { Box, icons, type LucideIcon } from 'lucide-react';
+import { Box, type LucideIcon } from 'lucide-react';
+import { resolveModuleIcon } from '@/lib/module-icons';
 
 export function Dashboard(): JSX.Element {
   const { user } = useAuth();
@@ -10,8 +11,7 @@ export function Dashboard(): JSX.Element {
 
   const getIcon = (iconName: string | null): LucideIcon => {
     if (!iconName) return Box;
-    const IconComponent = (icons as Record<string, LucideIcon>)[iconName];
-    return IconComponent || Box;
+    return resolveModuleIcon(iconName);
   };
 
   return (

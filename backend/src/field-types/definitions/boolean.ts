@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeBoolean, importCell } from '../shared';
 
 const configSchema = z.object({});
 
@@ -20,17 +21,12 @@ export const booleanField: FieldTypeDef<Config, boolean> = {
   sqlType: 'boolean',
   operators: BOOLEAN_OPERATORS,
   normalize(input) {
-    if (input === true || input === 'true' || input === 1 || input === '1') return true;
-    if (input === false || input === 'false' || input === 0 || input === '0') return false;
-    return null;
+    return normalizeBoolean(input);
   },
   toSearchText(value) { return value ? 'Yes' : 'No'; },
   toExportString(value) { return value ? 'true' : 'false'; },
   parseImport(raw) {
-    const s = raw.trim().toLowerCase();
-    if (['true', 'yes', '1', 'y'].includes(s)) return true;
-    if (['false', 'no', '0', 'n'].includes(s)) return false;
-    return null;
+    return normalizeBoolean(importCell(raw));
   },
   formComponent: 'CheckboxInput',
   cellComponent: 'CheckboxCell',

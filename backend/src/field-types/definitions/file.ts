@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { MAX_ARRAY_ITEMS } from '../shared';
 
 const configSchema = z.object({});
 
@@ -33,11 +34,35 @@ export const fileField: FieldTypeDef<Config, FileData[]> = {
   operators: FILE_OPERATORS,
   normalize(input) {
     if (!Array.isArray(input)) return null;
-    return input.length > 0 ? input : null;
+    if (input.length > 50) return null;
+
+    const files: { key: string; name: string; size: number; mime: string }[] = [];
+    for (const item of input) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const candidate = item as Record<string, unknown>;
+      const key = typeof candidate.key === 'string' ? candidate.key.trim() : '';
+      const name = typeof candidate.name === 'string' ? candidate.name.trim() : '';
+      if (!key || !name) return null;
+      const size = Number(candidate.size);
+      files.push({
+        key,
+        name,
+        size: Number.isFinite(size) && size >= 0 ? size : 0,
+        mime: typeof candidate.mime === 'string' ? candidate.mime : 'application/octet-stream',
+      });
+    }
+    return files.length > 0 ? files : null;
   },
-  toSearchText(value) { return value.map(v => v.name).join(', '); },
-  toExportString(value) { return value.map(v => v.name).join(', '); },
-  parseImport() { return null; },
+  toSearchText(value) {
+    return Array.isArray(value) ? value.map((f) => f?.name ?? '').filter(Boolean).join(' ') : '';
+  },
+  toExportString(value) {
+    return Array.isArray(value) ? value.map((f) => f?.name ?? '').filter(Boolean).join(', ') : '';
+  },
+  parseImport() {
+    // Files cannot be created from a CSV cell.
+    return null;
+  },
   formComponent: 'FileInput',
   cellComponent: 'FileCell',
   filterComponent: 'BooleanFilter',

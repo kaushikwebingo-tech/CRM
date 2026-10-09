@@ -7,6 +7,8 @@ import { RecordsModule } from './records/records.module';
 import { FilesModule } from './files/files.module';
 import { AutomationsModule } from './automations/automations.module';
 import { AuthGuard } from './auth/auth.guard';
+import { PermissionsGuard } from './auth/permissions.guard';
+import { RateLimitGuard } from './common/rate-limit.guard';
 import { AppErrorFilter } from './common/errors';
 import { ResponseInterceptor, IdempotencyInterceptor } from './common/interceptors';
 
@@ -23,6 +25,14 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     {
       provide: APP_GUARD,
       useClass: AuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
     },
     {
       provide: APP_FILTER,

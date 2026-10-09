@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
+import { Query, Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
 import { PipelinesService } from './pipelines.service';
 import { ModulesService } from './modules.service';
-import { CurrentOrg } from '../common/decorators';
+import { CurrentOrg, CurrentUser } from '../common/decorators';
 import { z } from 'zod';
+import { RequireAdmin } from '../auth/permissions.guard';
 
 const createPipelineSchema = z.object({
   name: z.string(),
@@ -35,22 +36,37 @@ export class PipelinesController {
     return this.pipelinesService.listPipelines(orgId, mod.id);
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Post('modules/:moduleKey/pipelines')
-  async createPipeline(@CurrentOrg() orgId: string, @Param('moduleKey') moduleKey: string, @Body() body: any) {
+  async createPipeline(
+    @CurrentOrg() orgId: string,
+    @Param('moduleKey') moduleKey: string,
+    @Body() body: unknown,
+    @CurrentUser() user: { id: string },
+  ) {
     const mod = await this.modulesService.getByKey(orgId, moduleKey);
-    const data = createPipelineSchema.parse(body);
-    return this.pipelinesService.createPipeline(orgId, mod.id, data);
+    return this.pipelinesService.createPipeline(orgId, mod.id, body, user?.id);
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Patch('modules/:moduleKey/pipelines/:id')
-  async updatePipeline(@CurrentOrg() orgId: string, @Param('id') id: string, @Body() body: any) {
-    const data = updatePipelineSchema.parse(body);
-    return this.pipelinesService.updatePipeline(orgId, id, data);
+  async updatePipeline(
+    @CurrentOrg() orgId: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.pipelinesService.updatePipeline(orgId, id, body, user?.id);
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Delete('modules/:moduleKey/pipelines/:id')
-  async deletePipeline(@CurrentOrg() orgId: string, @Param('id') id: string) {
-    await this.pipelinesService.softDeletePipeline(orgId, id);
+  async deletePipeline(
+    @CurrentOrg() orgId: string,
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    await this.pipelinesService.softDeletePipeline(orgId, id, user?.id);
     return { success: true };
   }
 
@@ -59,28 +75,52 @@ export class PipelinesController {
     return this.pipelinesService.listStages(orgId, pipelineId);
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Post('pipelines/:pipelineId/stages')
-  async createStage(@CurrentOrg() orgId: string, @Param('pipelineId') pipelineId: string, @Body() body: any) {
-    const data = createStageSchema.parse(body);
-    return this.pipelinesService.createStage(orgId, pipelineId, data);
+  async createStage(
+    @CurrentOrg() orgId: string,
+    @Param('pipelineId') pipelineId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.pipelinesService.createStage(orgId, pipelineId, body, user?.id);
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Patch('pipelines/:pipelineId/stages/:id')
-  async updateStage(@CurrentOrg() orgId: string, @Param('id') id: string, @Body() body: any) {
-    const data = updateStageSchema.parse(body);
-    return this.pipelinesService.updateStage(orgId, id, data);
+  async updateStage(
+    @CurrentOrg() orgId: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.pipelinesService.updateStage(orgId, id, body, user?.id);
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Delete('pipelines/:pipelineId/stages/:id')
-  async deleteStage(@CurrentOrg() orgId: string, @Param('id') id: string) {
-    await this.pipelinesService.softDeleteStage(orgId, id);
+  async deleteStage(
+    @CurrentOrg() orgId: string,
+    @Param('id') id: string,
+    @Query('moveToStageId') moveToStageId: string | undefined,
+    @CurrentUser() user: { id: string },
+  ) {
+    // Plan Section 9: records are moved to a destination stage first, so a
+    // delete can never orphan a record's stage_id.
+    await this.pipelinesService.softDeleteStage(orgId, id, { moveToStageId }, user?.id);
     return { success: true };
   }
 
+  @RequireAdmin('manageModules', 'change pipelines and stages')
   @Post('pipelines/:pipelineId/stages/reorder')
-  async reorderStages(@CurrentOrg() orgId: string, @Param('pipelineId') pipelineId: string, @Body() body: any) {
+  async reorderStages(
+    @CurrentOrg() orgId: string,
+    @Param('pipelineId') pipelineId: string,
+    @Body() body: any,
+    @CurrentUser() user: { id: string },
+  ) {
     const data = reorderSchema.parse(body);
-    await this.pipelinesService.reorderStages(orgId, pipelineId, data.orderedKeys);
+    await this.pipelinesService.reorderStages(orgId, pipelineId, data.orderedKeys, user?.id);
     return { success: true };
   }
 }

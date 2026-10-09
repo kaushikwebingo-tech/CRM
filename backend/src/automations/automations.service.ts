@@ -103,9 +103,9 @@ export class AutomationsService {
         ${dto.moduleId || null},
         ${dto.name.trim()},
         ${dto.isActive ?? true},
-        ${JSON.stringify(dto.trigger)}::jsonb,
-        ${dto.conditions ? JSON.stringify(dto.conditions) : null}::jsonb,
-        ${JSON.stringify(dto.actions)}::jsonb
+        ${JSON.stringify(dto.trigger ?? null)}::text::jsonb,
+        ${dto.conditions ? JSON.stringify(dto.conditions) : null}::text::jsonb,
+        ${JSON.stringify(dto.actions ?? [])}::text::jsonb
       )
       RETURNING *
     `;
@@ -114,31 +114,44 @@ export class AutomationsService {
   }
 
   async update(orgId: string, id: string, dto: UpdateAutomationDto): Promise<Automation> {
-    await this.getById(orgId, id);
+    const current = await this.getById(orgId, id);
 
-    const updates: Record<string, any> = {};
-    if (dto.name !== undefined) updates.name = dto.name.trim();
-    if (dto.moduleId !== undefined) updates.module_id = dto.moduleId;
-    if (dto.isActive !== undefined) updates.is_active = dto.isActive;
-    if (dto.trigger !== undefined) updates.trigger = dto.trigger;
-    if (dto.conditions !== undefined) updates.conditions = dto.conditions;
-    if (dto.actions !== undefined) updates.actions = dto.actions;
+    const next = {
+      name: dto.name !== undefined ? dto.name.trim() : (current as any).name,
+      moduleId: dto.moduleId !== undefined ? dto.moduleId : (current as any).module_id,
+      isActive: dto.isActive !== undefined ? dto.isActive : (current as any).is_active,
+      trigger: dto.trigger !== undefined ? dto.trigger : (current as any).trigger,
+      conditions: dto.conditions !== undefined ? dto.conditions : (current as any).conditions,
+      actions: dto.actions !== undefined ? dto.actions : (current as any).actions,
+    };
+
+    if (!next.name) {
+      throw new ValidationError('Name is required', [{ field: 'name', message: 'Name is required' }]);
+    }
+    if (!Array.isArray(next.actions) || next.actions.length === 0) {
+      throw new ValidationError('At least one action is required', [
+        { field: 'actions', message: 'At least one action is required' },
+      ]);
+    }
 
     const [updated] = await this.sql<Automation[]>`
       UPDATE automations
       SET
-        name = COALESCE(${updates.name ?? null}, name),
-        module_id = CASE WHEN ${updates.module_id !== undefined} THEN ${updates.module_id} ELSE module_id END,
-        is_active = COALESCE(${updates.is_active ?? null}, is_active),
-        trigger = CASE WHEN ${updates.trigger !== undefined} THEN ${JSON.stringify(updates.trigger)}::jsonb ELSE trigger END,
-        conditions = CASE WHEN ${updates.conditions !== undefined} THEN ${updates.conditions ? JSON.stringify(updates.conditions) : null}::jsonb ELSE conditions END,
-        actions = CASE WHEN ${updates.actions !== undefined} THEN ${JSON.stringify(updates.actions)}::jsonb ELSE actions END
+        name = ${next.name},
+        module_id = ${next.moduleId ?? null},
+        is_active = ${next.isActive ?? false},
+        trigger = ${JSON.stringify(next.trigger ?? null)}::text::jsonb,
+        conditions = ${next.conditions ? JSON.stringify(next.conditions) : null}::text::jsonb,
+        actions = ${JSON.stringify(next.actions ?? [])}::text::jsonb
       WHERE id = ${id}
         AND org_id = ${orgId}
         AND deleted_at IS NULL
       RETURNING *
     `;
 
+    if (!updated) {
+      throw new NotFoundError(`Automation ${id} not found`);
+    }
     return updated;
   }
 
@@ -163,7 +176,12 @@ export class AutomationsService {
     return rows;
   }
 
-  async getMatchingAutomations(orgId: string, eventType: string, moduleKey?: string): Promise<Automation[]> {
+  async getMatchingAutomations(
+    orgId: string,
+    eventType: string,
+    moduleKey?: string,
+    changedKeys?: string[],
+  ): Promise<Automation[]> {
     const rows = await this.sql<Automation[]>`
       SELECT *
       FROM automations
@@ -182,6 +200,12 @@ export class AutomationsService {
       const trigModule = trig.moduleKey || trig.module_key || trig.module;
       if (trigModule && moduleKey && trigModule !== moduleKey) {
         return false;
+      }
+     
+      const watched = trig.fieldKeys || trig.field_keys;
+      if (Array.isArray(watched) && watched.length > 0) {
+        if (!changedKeys || changedKeys.length === 0) return false;
+        if (!watched.some((k: string) => changedKeys.includes(k))) return false;
       }
       return true;
     });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeUuid, importCell } from '../shared';
 
 const configSchema = z.object({});
 
@@ -20,12 +21,13 @@ export const userField: FieldTypeDef<Config, string> = {
   sqlType: 'uuid',
   operators: USER_OPERATORS,
   normalize(input) {
-    if (input == null || input === '') return null;
-    return String(input).trim();
+    return normalizeUuid(input);
   },
   toSearchText() { return ''; },
   toExportString(value) { return value; },
-  parseImport(raw) { return raw.trim() || null; },
+  parseImport(raw) {
+    return normalizeUuid(importCell(raw));
+  },
   formComponent: 'UserInput',
   cellComponent: 'UserCell',
   filterComponent: 'UserFilter',

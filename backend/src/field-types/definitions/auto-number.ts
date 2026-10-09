@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { normalizeNumber } from '../shared';
 
 const configSchema = z.object({
   prefix: z.string().optional(),
@@ -8,6 +9,10 @@ const configSchema = z.object({
 });
 
 type Config = z.infer<typeof configSchema>;
+
+const NUMBER_OPERATORS: FilterOperator[] = [
+  'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between', 'is_empty', 'is_not_empty',
+];
 
 export const autoNumberField: FieldTypeDef<Config, number> = {
   key: 'auto_number',
@@ -18,12 +23,10 @@ export const autoNumberField: FieldTypeDef<Config, number> = {
     return z.number();
   },
   sqlType: 'numeric',
-  operators: [],
+  operators: NUMBER_OPERATORS,
   normalize(input) {
-    if (input == null || input === '') return null;
-    const num = Number(input);
-    if (Number.isNaN(num)) return null;
-    return num;
+ 
+    return normalizeNumber(input, { precision: 0 });
   },
   toSearchText(value, config) {
     const prefix = config.prefix || '';
@@ -39,7 +42,7 @@ export const autoNumberField: FieldTypeDef<Config, number> = {
   formComponent: 'AutoNumberInput',
   cellComponent: 'AutoNumberCell',
   filterComponent: 'NumberFilter',
-  isSortable: false,
+  isSortable: true,
   canBeIndexed: false,
   canBeUnique: true,
 };

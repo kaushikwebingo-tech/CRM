@@ -1,26 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
-import {
-  Layers,
-  Plus,
-  ArrowRight,
-  GitBranch,
-  Trash2,
-  Sliders,
-  ExternalLink,
-  ShieldCheck,
-  Building,
-  Briefcase,
-  Calendar,
-  CheckSquare,
-  FileText,
-  MapPin,
-  Users,
-  ShoppingCart,
-  Activity,
-  Box,
-} from 'lucide-react';
+import { Box, Layers, Plus, ArrowRight, GitBranch, Trash2, Sliders, ExternalLink, ShieldCheck } from 'lucide-react';
 import { api } from '@/api/client';
 import { useSchema } from '@/hooks/use-schema';
 import { Button } from '@/components/ui/button';
@@ -37,19 +18,11 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { MODULE_ICON_OPTIONS } from '@/lib/module-icons';
 
-const AVAILABLE_ICONS = [
-  { name: 'Box', icon: Box },
-  { name: 'MapPin', icon: MapPin },
-  { name: 'Briefcase', icon: Briefcase },
-  { name: 'Calendar', icon: Calendar },
-  { name: 'Building', icon: Building },
-  { name: 'CheckSquare', icon: CheckSquare },
-  { name: 'FileText', icon: FileText },
-  { name: 'Users', icon: Users },
-  { name: 'ShoppingCart', icon: ShoppingCart },
-  { name: 'Activity', icon: Activity },
-];
+// The same bounded set the sidebar resolves from, so an admin can only pick an
+// icon the app can actually render.
+const AVAILABLE_ICONS = MODULE_ICON_OPTIONS;
 
 const PRESET_COLORS = [
   { name: 'Blue', value: 'blue' },

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/commo
 import { ModulesService } from './modules.service';
 import { CurrentOrg } from '../common/decorators';
 import { z } from 'zod';
+import { RequireAdmin } from '../auth/permissions.guard';
 
 const createSchema = z.object({
   key: z.string(),
@@ -24,18 +25,21 @@ export class ModulesController {
     return this.modulesService.list(orgId);
   }
 
+  @RequireAdmin('manageModules', 'create a module')
   @Post()
   async create(@CurrentOrg() orgId: string, @Body() body: any) {
     const data = createSchema.parse(body);
     return this.modulesService.create(orgId, data);
   }
 
+  @RequireAdmin('manageModules', 'change a module')
   @Patch(':key')
   async update(@CurrentOrg() orgId: string, @Param('key') key: string, @Body() body: any) {
     const data = updateSchema.parse(body);
     return this.modulesService.update(orgId, key, data);
   }
 
+  @RequireAdmin('manageModules', 'delete a module')
   @Delete(':key')
   async remove(@CurrentOrg() orgId: string, @Param('key') key: string) {
     await this.modulesService.softDelete(orgId, key);

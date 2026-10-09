@@ -1,12 +1,10 @@
 import { z } from 'zod';
 import { FieldTypeDef, FilterOperator } from '../types';
+import { optionsConfigSchema, optionIds, normalizeStringArray, importCell } from '../shared';
 
 const configSchema = z.object({
-  options: z.array(z.object({
-    id: z.string(),
-    label: z.string(),
-    color: z.string().optional(),
-  })).default([]),
+  options: optionsConfigSchema,
+  maxSelected: z.number().int().min(1).max(500).optional(),
 });
 
 type Config = z.infer<typeof configSchema>;
@@ -26,18 +24,40 @@ export const multiSelectField: FieldTypeDef<Config, string[]> = {
   },
   sqlType: 'jsonb',
   operators: MULTI_SELECT_OPERATORS,
-  normalize(input) {
-    if (!Array.isArray(input)) return null;
-    const arr = input.filter(x => x != null).map(String).map(s => s.trim());
-    return arr.length > 0 ? arr : null;
+  normalize(input, config) {
+    const values = normalizeStringArray(input, { maxItems: config?.maxSelected ?? 500 });
+    if (!values) return null;
+
+    const ids = optionIds(config?.options);
+    const labelIndex = new Map(
+      (config?.options ?? []).map((o) => [o.label.toLowerCase(), o.id] as const),
+    );
+
+    const resolved: string[] = [];
+    for (const value of values) {
+      if (ids.has(value)) {
+        resolved.push(value);
+        continue;
+      }
+      const byLabel = labelIndex.get(value.toLowerCase());
+      if (byLabel) {
+        resolved.push(byLabel);
+        continue;
+      }
+      return null;
+    }
+
+    const unique = Array.from(new Set(resolved));
+    return unique.length > 0 ? unique : null;
   },
   toSearchText(value, config) {
     return value.map(v => config.options?.find(o => o.id === v)?.label || v).join(', ');
   },
   toExportString(value) { return value.join(','); },
-  parseImport(raw) {
-    const arr = raw.split(',').map(s => s.trim()).filter(Boolean);
-    return arr.length > 0 ? arr : null;
+  parseImport(raw, config) {
+    const cell = importCell(raw);
+    if (!cell) return null;
+    return multiSelectField.normalize(cell.split(',').map((s) => s.trim()).filter(Boolean), config);
   },
   formComponent: 'MultiSelectInput',
   cellComponent: 'MultiSelectCell',

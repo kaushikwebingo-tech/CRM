@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { DATABASE } from '../db/connection';
 import { modules, pipelines, pipelineStages, views } from '../db/schema';
-import { eq, and, isNull, asc } from 'drizzle-orm';
+import { eq, and, isNull, asc, sql as drizzleSql } from 'drizzle-orm';
 import { ConflictError, ForbiddenError, NotFoundError } from '../common/errors';
 
 @Injectable()
@@ -28,7 +28,15 @@ export class ModulesService {
     return this.db.transaction(async (tx: any) => {
       const [mod] = await tx.insert(modules).values({
         orgId,
-        ...data,
+        key: data.key,
+        labelSingular: data.labelSingular,
+        labelPlural: data.labelPlural,
+        icon: data.icon ?? null,
+        color: data.color ?? null,
+        hasPipeline: data.hasPipeline ?? false,
+        nameFieldLabel: data.nameFieldLabel ?? 'Name',
+        isSystem: false,
+        position: 0,
       }).returning();
 
       if (mod.hasPipeline) {
@@ -61,8 +69,21 @@ export class ModulesService {
     if (data.key !== undefined || data.isSystem !== undefined) {
       throw new ForbiddenError('Cannot update immutable fields');
     }
+    // Only these columns may come from a request body; the previous version
+    // spread the client's object, so `orgId`, `id` and `deletedAt` were settable.
     const [updated] = await this.db.update(modules)
-      .set({ ...data, schemaVersion: mod.schemaVersion + 1, updatedAt: new Date() })
+      .set({
+        ...(data.labelSingular !== undefined && { labelSingular: data.labelSingular }),
+        ...(data.labelPlural !== undefined && { labelPlural: data.labelPlural }),
+        ...(data.icon !== undefined && { icon: data.icon }),
+        ...(data.color !== undefined && { color: data.color }),
+        ...(data.nameFieldLabel !== undefined && { nameFieldLabel: data.nameFieldLabel }),
+        ...(data.titleTemplate !== undefined && { titleTemplate: data.titleTemplate }),
+        ...(data.position !== undefined && { position: data.position }),
+        ...(data.hasPipeline !== undefined && { hasPipeline: data.hasPipeline }),
+        schemaVersion: drizzleSql`${modules.schemaVersion} + 1`,
+        updatedAt: new Date(),
+      })
       .where(eq(modules.id, mod.id))
       .returning();
     return updated;
@@ -74,9 +95,23 @@ export class ModulesService {
     await this.db.update(modules).set({ deletedAt: new Date() }).where(eq(modules.id, mod.id));
   }
 
-  async bumpSchemaVersion(moduleId: string) {
-    const [mod] = await this.db.select({ schemaVersion: modules.schemaVersion }).from(modules).where(eq(modules.id, moduleId)).limit(1);
-    if (!mod) return;
-    await this.db.update(modules).set({ schemaVersion: mod.schemaVersion + 1, updatedAt: new Date() }).where(eq(modules.id, moduleId));
+  /**
+   * Increments the module's schema version.
+   *
+   * Plan Section 6: the version is bumped "inside the same transaction as any
+   * change to that module's fields or stages", because the compiled schema is
+   * cached under `moduleId:schemaVersion` — if the bump is lost, the compiler
+   * keeps serving a schema that does not have the new field in it.
+   *
+   * It is also a single `schema_version + 1` statement rather than a
+   * read-then-write: two concurrent field creations both read the same value
+   * and one bump used to be silently discarded.
+   */
+  async bumpSchemaVersion(moduleId: string, tx?: any) {
+    const runner = tx ?? this.db;
+    await runner
+      .update(modules)
+      .set({ schemaVersion: drizzleSql`${modules.schemaVersion} + 1`, updatedAt: new Date() })
+      .where(eq(modules.id, moduleId));
   }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSchema } from '@/hooks/use-schema';
@@ -19,11 +19,13 @@ import { RecordDrawer } from '@/components/record-drawer/record-drawer';
 import { SavedViewsBar } from '@/components/views/saved-views-bar';
 import { BulkActionBar } from '@/components/bulk/bulk-action-bar';
 import { ImportCsvModal } from '@/components/csv/import-csv-modal';
+import { FilterBuilder } from '@/components/filter/filter-builder';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Plus, Search, X, Table, LayoutGrid, Download, Upload } from 'lucide-react';
+import { ApiError } from '@/api/client';
 
 export function ModuleList(): JSX.Element {
   const { moduleKey } = useParams<{ moduleKey: string }>();
@@ -43,6 +45,8 @@ export function ModuleList(): JSX.Element {
   const [activeRecord, setActiveRecord] = useState<RecordItem | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [activeView, setActiveView] = useState<SavedView | null>(null);
+  const [appliedFilter, setAppliedFilter] = useState<Record<string, unknown> | null>(null);
+  const [saveViewModalOpen, setSaveViewModalOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
@@ -57,25 +61,74 @@ export function ModuleList(): JSX.Element {
     setRecords([]);
     setNextCursor(null);
     setSelectedIds([]);
-  }, [moduleKey, debouncedSearch, sort, activeView]);
+  }, [moduleKey, debouncedSearch, sort, appliedFilter]);
 
   const moduleDef = moduleKey ? getModule(moduleKey) : undefined;
 
-  const activeFilterString = activeView?.config?.filter
-    ? JSON.stringify(activeView.config.filter)
+  const activeFilterString = appliedFilter
+    ? JSON.stringify(appliedFilter)
     : undefined;
+
+  /**
+   * The active view's column list.
+   *
+   * It drives both what the grid renders and what the request asks for, so a
+   * list view fetches six columns rather than the whole `data` blob
+   * (Plan Section 14, "Select what is needed").
+   */
+  const viewColumns = useMemo<string[] | undefined>(() => {
+    const configured = (activeView?.config as { columns?: unknown })?.columns;
+    if (!Array.isArray(configured) || configured.length === 0) return undefined;
+    return configured.filter((c): c is string => typeof c === 'string');
+  }, [activeView]);
+
+  const viewCardFields = useMemo<string[] | undefined>(() => {
+    const configured = (activeView?.config as { cardFields?: unknown })?.cardFields;
+    if (!Array.isArray(configured)) return undefined;
+    return configured.filter((c): c is string => typeof c === 'string');
+  }, [activeView]);
+
+  /**
+   * The keys the request needs: the view's columns plus anything the sort or
+   * the filter references, or the request would come back without the column
+   * it is being sorted on.
+   */
+  const requestedFields = useMemo<string[] | undefined>(() => {
+    if (!viewColumns) return undefined;
+    const keys = new Set(viewColumns);
+    const sortKey = (sort || '').split(':')[0];
+    if (sortKey) keys.add(sortKey);
+    if (appliedFilter) {
+      const walk = (node: unknown): void => {
+        if (!node || typeof node !== 'object') return;
+        const group = node as { and?: unknown[]; or?: unknown[]; field?: unknown };
+        if (Array.isArray(group.and)) group.and.forEach(walk);
+        if (Array.isArray(group.or)) group.or.forEach(walk);
+        if (typeof group.field === 'string') keys.add(group.field);
+      };
+      walk(appliedFilter);
+    }
+    return Array.from(keys);
+  }, [viewColumns, sort, appliedFilter]);
 
   const { data: countData } = useQuery({
     queryKey: ['records', moduleKey, 'count', debouncedSearch, activeFilterString],
     queryFn: () =>
       moduleKey
-        ? fetchRecordCount(moduleKey, activeFilterString)
+        ? fetchRecordCount(moduleKey, activeFilterString, debouncedSearch || undefined)
         : Promise.resolve({ count: 0 }),
     enabled: Boolean(moduleKey),
   });
 
-  const { isLoading, isFetching } = useQuery({
-    queryKey: ['records', moduleKey, 'list', debouncedSearch, sort, activeFilterString],
+  const {
+    isLoading,
+    isFetching,
+    error: listError,
+  } = useQuery({
+    queryKey: [
+      'records', moduleKey, 'list', debouncedSearch, sort, activeFilterString,
+      requestedFields?.join(',') ?? 'all',
+    ],
     queryFn: async () => {
       if (!moduleKey) return null;
       const res = await fetchRecords(moduleKey, {
@@ -83,6 +136,7 @@ export function ModuleList(): JSX.Element {
         sort,
         filter: activeFilterString,
         limit: 50,
+        fields: requestedFields,
       });
       setRecords(res.records);
       setNextCursor(res.nextCursor);
@@ -90,6 +144,7 @@ export function ModuleList(): JSX.Element {
       return res;
     },
     enabled: Boolean(moduleKey),
+    retry: false,
   });
 
   const loadMore = async () => {
@@ -100,6 +155,7 @@ export function ModuleList(): JSX.Element {
       filter: activeFilterString,
       cursor: nextCursor,
       limit: 50,
+      fields: requestedFields,
     });
     setRecords((prev) => [...prev, ...res.records]);
     setNextCursor(res.nextCursor);
@@ -117,10 +173,18 @@ export function ModuleList(): JSX.Element {
         description: `${newRec.display_name} has been created successfully.`,
       });
     },
-    onError: (err: any) => {
+    onError: (err: unknown) => {
+      // The form maps the `fields` array onto its inputs; the toast carries the
+      // sentence the API wrote.
+      const detail =
+        err instanceof ApiError
+          ? err.detail
+          : err instanceof Error
+            ? err.message
+            : 'Please check the entered values.';
       toast({
-        title: 'Failed to create record',
-        description: err.message || 'Please check the entered values.',
+        title: 'Could not create the record',
+        description: detail,
         variant: 'destructive',
       });
     },
@@ -251,6 +315,9 @@ export function ModuleList(): JSX.Element {
       if (view.config?.sort) {
         setSort(view.config.sort);
       }
+      setAppliedFilter(view.config?.filter ? (view.config.filter as Record<string, unknown>) : null);
+    } else {
+      setAppliedFilter(null);
     }
   };
 
@@ -292,9 +359,11 @@ export function ModuleList(): JSX.Element {
         moduleKey={moduleKey}
         activeViewId={activeView?.id || null}
         onSelectView={handleSelectView}
-        currentFilter={activeView?.config?.filter}
+        currentFilter={appliedFilter || undefined}
         currentSort={sort}
         currentType={viewMode}
+        isSaveModalOpen={saveViewModalOpen}
+        onSaveModalOpenChange={setSaveViewModalOpen}
       />
 
       <div className="flex flex-col flex-1 min-h-0 p-6 space-y-4">
@@ -362,6 +431,14 @@ export function ModuleList(): JSX.Element {
               )}
             </div>
 
+            <FilterBuilder
+              moduleDef={moduleDef}
+              pipelineStages={pipelineStages}
+              appliedFilter={appliedFilter}
+              onApplyFilter={(f) => setAppliedFilter(f)}
+              onSaveAsView={() => setSaveViewModalOpen(true)}
+            />
+
             <Button
               variant="outline"
               size="sm"
@@ -397,6 +474,7 @@ export function ModuleList(): JSX.Element {
         <div className="flex-1 min-h-0">
           {viewMode === 'kanban' && moduleDef.hasPipeline ? (
             <KanbanBoard
+              cardFields={viewCardFields}
               module={moduleDef}
               records={records}
               onSelectRecord={handleSelectRecord}
@@ -404,6 +482,8 @@ export function ModuleList(): JSX.Element {
             />
           ) : (
             <DynamicTable
+              columns={viewColumns}
+              error={(listError as Error) ?? null}
               module={moduleDef}
               records={records}
               isLoading={isLoading}

@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { CurrentOrg } from '../common/decorators';
 import { AutomationsService, CreateAutomationDto, UpdateAutomationDto } from './automations.service';
+import { RequireAdmin } from '../auth/permissions.guard';
 
 @Controller('automations')
 export class AutomationsController {
@@ -22,6 +23,7 @@ export class AutomationsController {
     return this.automationsService.list(orgId, moduleId);
   }
 
+  @RequireAdmin('manageAutomations', 'create an automation')
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(@CurrentOrg() orgId: string, @Body() body: CreateAutomationDto) {
@@ -33,6 +35,7 @@ export class AutomationsController {
     return this.automationsService.getById(orgId, id);
   }
 
+  @RequireAdmin('manageAutomations', 'change an automation')
   @Patch(':id')
   async update(
     @CurrentOrg() orgId: string,
@@ -42,6 +45,7 @@ export class AutomationsController {
     return this.automationsService.update(orgId, id, body);
   }
 
+  @RequireAdmin('manageAutomations', 'delete an automation')
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async delete(@CurrentOrg() orgId: string, @Param('id') id: string) {

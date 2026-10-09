@@ -4,6 +4,9 @@ import { FieldsService } from './fields.service';
 import { PipelinesService } from './pipelines.service';
 import { ViewsService } from './views.service';
 import { SchemaCompiler } from './schema-compiler';
+import { AuditService } from './audit.service';
+import { IndexPromotionService } from './index-promotion.service';
+import { IndexPromotionController } from './index-promotion.controller';
 import { ModulesController } from './modules.controller';
 import { FieldsController } from './fields.controller';
 import { PipelinesController } from './pipelines.controller';
@@ -17,8 +20,11 @@ import { SchemaController } from './schema.controller';
     PipelinesController,
     ViewsController,
     SchemaController,
+    IndexPromotionController,
   ],
   providers: [
+    AuditService,
+    IndexPromotionService,
     ModulesService,
     FieldsService,
     PipelinesService,
@@ -26,6 +32,8 @@ import { SchemaController } from './schema.controller';
     SchemaCompiler,
   ],
   exports: [
+    AuditService,
+    IndexPromotionService,
     ModulesService,
     FieldsService,
     PipelinesService,

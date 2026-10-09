@@ -5,6 +5,7 @@ import { users, roles } from '../db/schema';
 import { eq, and, asc } from 'drizzle-orm';
 import { AuthService } from './auth.service';
 import { NotFoundError, ConflictError } from '../common/errors';
+import { RequireAdmin } from './permissions.guard';
 
 @Controller('users')
 export class UsersController {
@@ -47,6 +48,7 @@ export class UsersController {
     }));
   }
 
+  @RequireAdmin('manageUsers', 'change a user role')
   @Patch(':id/role')
   async assignRole(
     @CurrentOrg() orgId: string,
@@ -84,6 +86,7 @@ export class UsersController {
     return updated;
   }
 
+  @RequireAdmin('manageUsers', 'create a user')
   @Post()
   async createUser(
     @CurrentOrg() orgId: string,
