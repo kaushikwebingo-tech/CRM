@@ -69,13 +69,6 @@ export function ModuleList(): JSX.Element {
     ? JSON.stringify(appliedFilter)
     : undefined;
 
-  /**
-   * The active view's column list.
-   *
-   * It drives both what the grid renders and what the request asks for, so a
-   * list view fetches six columns rather than the whole `data` blob
-   * (Plan Section 14, "Select what is needed").
-   */
   const viewColumns = useMemo<string[] | undefined>(() => {
     const configured = (activeView?.config as { columns?: unknown })?.columns;
     if (!Array.isArray(configured) || configured.length === 0) return undefined;
@@ -88,11 +81,7 @@ export function ModuleList(): JSX.Element {
     return configured.filter((c): c is string => typeof c === 'string');
   }, [activeView]);
 
-  /**
-   * The keys the request needs: the view's columns plus anything the sort or
-   * the filter references, or the request would come back without the column
-   * it is being sorted on.
-   */
+
   const requestedFields = useMemo<string[] | undefined>(() => {
     if (!viewColumns) return undefined;
     const keys = new Set(viewColumns);
@@ -116,7 +105,7 @@ export function ModuleList(): JSX.Element {
     queryFn: () =>
       moduleKey
         ? fetchRecordCount(moduleKey, activeFilterString, debouncedSearch || undefined)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, approximate: false }),
     enabled: Boolean(moduleKey),
   });
 
@@ -373,8 +362,12 @@ export function ModuleList(): JSX.Element {
               {moduleDef.labelPlural}
             </h1>
             {countData?.count !== undefined && (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+              <span
+                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700"
+                title={countData.approximate ? 'Approximate count' : undefined}
+              >
                 {countData.count.toLocaleString()}
+                {countData.approximate ? '+' : ''}
               </span>
             )}
 

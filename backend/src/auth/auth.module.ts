@@ -6,6 +6,8 @@ import { AuthController } from './auth.controller';
 import { RolesController } from './roles.controller';
 import { RolesService } from './roles.service';
 import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+import { AuditService } from '../metadata/audit.service';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthGuard } from './auth.guard';
 
@@ -22,11 +24,13 @@ import { AuthGuard } from './auth.guard';
     AuthService,
     SessionService,
     RolesService,
+    UsersService,
+    AuditService,
     {
       provide: APP_GUARD,
       useClass: AuthGuard,
     },
   ],
-  exports: [AuthService, SessionService, RolesService, REDIS],
+  exports: [AuthService, SessionService, RolesService, UsersService, REDIS],
 })
 export class AuthModule {}

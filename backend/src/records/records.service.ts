@@ -9,12 +9,10 @@ import { FilterCompiler } from './filter-compiler';
 import { SearchCompiler } from './search-compiler';
 import { encodeCursor, decodeCursor } from './keyset-pagination';
 
-/** The cursor value is bound with the sort expression's own type. */
-/** Above this many rows the planner's estimate is used instead of an exact count. */
 const EXACT_COUNT_LIMIT = 10_000;
 
-/** Upper bound on a single CSV export, so one request cannot exhaust memory. */
-const EXPORT_ROW_LIMIT = 50_000;
+
+const EXPORT_ROW_LIMIT = 10_000;
 
 const CURSOR_CASTS: Record<string, string> = {
   text: '::text',
@@ -974,7 +972,7 @@ export class RecordsService {
 
     if (existing.stage_id === stageId) {
       const res = await this.expandLookups(orgId, compiled, [existing]);
-      return res[0];
+      return this.stripUnreadable(currentUser, moduleKey, res)[0];
     }
 
     const [targetStage] = await this.sql`
@@ -1062,7 +1060,7 @@ export class RecordsService {
     this.redis.publish('outbox:notify', '1').catch(() => {});
 
     const res = await this.expandLookups(orgId, compiled, [updated]);
-    return res[0];
+    return this.stripUnreadable(currentUser, moduleKey, res)[0];
   }
 
   async getTimeline(
@@ -1071,7 +1069,6 @@ export class RecordsService {
     recordId: string,
     currentUser: CurrentUserPayload,
   ) {
-    // Reading a timeline is reading the record, so the same scope applies.
     await this.findById(orgId, moduleKey, recordId, currentUser);
     const mod = await this.modulesService.getByKey(orgId, moduleKey);
     const events = await this.sql`
@@ -1429,7 +1426,6 @@ export class RecordsService {
         { field: 'action', message: 'Must be assign, update or delete' },
       ]);
     }
-    // A non-uuid here used to reach `id = ANY($1)` and surface as a 500.
     const record_ids = asUuidArray(body.record_ids, 'record_ids', 1000);
     const data = asObject(body.data ?? {}, 'data');
 
@@ -1537,11 +1533,6 @@ export class RecordsService {
       if (action === 'update') {
         const compiled = await this.schemaCompiler.compile(mod.id);
 
-        // This branch used to merge the client's raw JSON straight into the
-        // column (`data || $1::jsonb`), bypassing normalize() and valueSchema
-        // entirely. That is how an unparseable value got into a typed field and
-        // took out every list view that sorted or filtered it. Bulk edits now
-        // go through exactly the same validation as a single PATCH.
         const { data: validatedPatch, touched } = this.validateData(
           compiled,
           asDataObject(data.data),
@@ -1621,8 +1612,6 @@ export class RecordsService {
             )
           `;
 
-          // One event per record, keyed to the record — an automation cannot act
-          // on an event whose aggregate is a module.
           await tx`
             INSERT INTO outbox_events (org_id, event_type, aggregate_id, payload, available_at)
             VALUES (
@@ -1667,8 +1656,6 @@ export class RecordsService {
 
     const hidden = unreadableFields(permissions, moduleKey);
 
-    // Pages through the same keyset-paginated list the UI uses, so export never
-    // depends on a single oversized query.
     const listRecords: any[] = [];
     let cursor: string | undefined;
     do {
@@ -1810,8 +1797,6 @@ export class RecordsService {
 
               const cellWasBlank = String(rawCell).trim() === '';
               if (parsedVal === null || parsedVal === undefined) {
-                // A blank cell is simply absent; a non-blank cell that could not
-                // be parsed is reported instead of silently dropped.
                 if (!cellWasBlank) {
                   rowErrors.push(`"${field.label}": "${String(rawCell).slice(0, 40)}" is not a valid ${field.type}`);
                 } else if (field.isRequired) {
@@ -1843,8 +1828,6 @@ export class RecordsService {
             displayName = `Imported ${mod.labelSingular} #${rowIndex}`;
           }
 
-          // The row is skipped and reported; one bad row no longer aborts the
-          // chunk's transaction and loses the other 499 rows with it.
           if (rowErrors.length > 0) {
             errors.push({ row: rowIndex, error: rowErrors.join('; ') });
             continue;
@@ -1891,9 +1874,7 @@ export class RecordsService {
             )
           `;
 
-          // One record.created per row, keyed to the record, so an automation
-          // sees an imported lead exactly as it sees one created in the UI.
-          await tx`
+         await tx`
             INSERT INTO outbox_events (org_id, event_type, aggregate_id, payload, available_at)
             VALUES (
               ${orgId}, 'record.created', ${inserted.id},
@@ -1924,10 +1905,7 @@ export class RecordsService {
     };
   }
 
-  /**
-   * Resolves a sort key through compiled metadata, which is the only thing
-   * allowed to decide a column expression (Plan Section 8 rule 4).
-   */
+ 
   private resolveSort(
     compiled: CompiledModule,
     key: string,
@@ -1971,7 +1949,6 @@ export class RecordsService {
       'r.deleted_at IS NULL',
     ];
 
-    // The record scope is part of the predicate, not a post-fetch filter.
     const scope = compileScope(
       scopeFor(permissions, moduleKey, 'read'),
       currentUser.id,
@@ -2002,9 +1979,6 @@ export class RecordsService {
     const cursorRaw = asTrimmedString(query.cursor, 'cursor');
     if (cursorRaw) {
       const decoded = decodeCursor(cursorRaw);
-      // A cursor is server-minted and opaque. One that does not decode, or that
-      // was minted against a different sort key, is rejected rather than bound
-      // into a row comparison where Postgres raises 22P02 for the whole query.
       if (!decoded) {
         throw new ValidationError('The pagination cursor is not valid', [
           { field: 'cursor', message: 'Invalid cursor' },
@@ -2022,21 +1996,13 @@ export class RecordsService {
         ]);
       }
 
-      // The cursor value is cast to the sort expression's own type, so a value
-      // of the wrong shape cannot raise mid-query.
-      const cast = CURSOR_CASTS[sort.type] ?? '::text';
+     const cast = CURSOR_CASTS[sort.type] ?? '::text';
       const comparison = dir === 'desc' ? '<' : '>';
       const cursorValueIsNull = decoded.c === null || decoded.c === undefined;
 
-      // A plain row comparison `(expr, id) < ($c, $id)` evaluates to NULL for
-      // every row whose sort value is NULL, so those rows were silently
-      // dropped from every page after the first — records that exist and are
-      // never shown. With `NULLS LAST` the null block sits after all non-null
-      // values, so the predicate has to say that explicitly.
       if (cursorValueIsNull) {
         const idPlaceholder = `$${params.length + 1}`;
         params.push(decoded.id);
-        // We are already inside the null block; only the id tiebreaker applies.
         whereConditions.push(`(${sortSql} IS NULL AND r.id ${comparison} ${idPlaceholder}::uuid)`);
       } else {
         const cPlaceholder = `$${params.length + 1}`;
@@ -2053,9 +2019,6 @@ export class RecordsService {
     const limitPlaceholder = `$${params.length + 1}`;
     params.push(limit + 1);
 
-    // ?fields= lets a list view ask for the columns its config actually shows
-    // instead of a whole 40-key data blob (Plan Section 14, "Select what is
-    // needed"). Keys are resolved through compiled metadata, never interpolated.
     const requestedFields = parseFieldList(query.fields);
     const projection = this.buildProjection(compiled, requestedFields);
 
@@ -2077,7 +2040,6 @@ export class RecordsService {
       const last = records[records.length - 1];
       let sortVal: unknown;
       if (sort.isCore) {
-        // core columns come back as real columns on the row
         sortVal = (last as Record<string, unknown>)[sortFieldKey] ?? null;
       } else {
         const dataObj = (last.data as Record<string, unknown>) || {};
@@ -2096,7 +2058,6 @@ export class RecordsService {
     };
   }
 
-  /** Builds the SELECT list. Only keys present in compiled metadata are emitted. */
   private buildProjection(compiled: CompiledModule, requested?: string[]): string {
     if (!requested || requested.length === 0) return 'r.*';
 
@@ -2122,15 +2083,7 @@ export class RecordsService {
     return `${base.join(', ')}, jsonb_strip_nulls(jsonb_build_object(${pairs})) AS data`;
   }
 
-  /**
-   * Count for list headers and kanban columns.
-   *
-   * Plan Section 14, "Count cheaply": an exact COUNT(*) over a filtered 200k-row
-   * table is too expensive to pay on every page, so above a threshold the
-   * planner's estimate is used and the caller is told the number is approximate.
-   * It also honours `q`, which it previously ignored — so the header count no
-   * longer disagrees with the list the user is looking at.
-   */
+  
   async count(
     orgId: string,
     moduleKey: string,
@@ -2181,7 +2134,6 @@ export class RecordsService {
       return { count: estimate, approximate: true };
     }
 
-    // Stop counting once past the limit instead of scanning the whole table.
     const [result] = await this.sql.unsafe(
       `SELECT COUNT(*)::int AS count FROM (
          SELECT 1 FROM records r WHERE ${where} LIMIT ${EXACT_COUNT_LIMIT + 1}
@@ -2195,7 +2147,6 @@ export class RecordsService {
       : { count: exact, approximate: false };
   }
 
-  /** Reads the planner's row estimate for the same predicate. Null if unavailable. */
   private async estimateCount(where: string, params: unknown[]): Promise<number | null> {
     try {
       const rows = await this.sql.unsafe(

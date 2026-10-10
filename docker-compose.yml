@@ -1,86 +1,131 @@
+# One VPS, five containers (Plan Section 12).
+#
+# `docker compose up -d` starts the whole stack. The api/worker/caddy services
+# previously carried `profiles: [production]`, which meant a bare
+# `docker compose up` started only Postgres and Redis — so milestone M0's
+# "clones, runs one command, logs in as a seeded admin" did not hold.
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: crm
-      POSTGRES_USER: crm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Bound to loopback: the database must not be reachable from the internet.
+      - "127.0.0.1:5432:5432"
     command: >
       postgres
-      -c shared_buffers=256MB
-      -c effective_cache_size=1GB
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
       -c work_mem=16MB
-      -c maintenance_work_mem=128MB
+      -c maintenance_work_mem=256MB
       -c random_page_cost=1.1
       -c max_connections=50
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crm"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm}"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
+    logging: &json_logs
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly no
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
+    logging: *json_logs
 
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./frontend/dist:/srv
-      - caddy_data:/data
+  # Migrations run as a pre-start job (Plan Section 12, "Deploys"), so the API
+  # never boots against a schema it does not expect.
+  migrate:
+    build:
+      context: ./backend
+    restart: "no"
+    command: node dist/db/migrate.js
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-crm}
     depends_on:
-      - api
-    profiles:
-      - production
+      postgres:
+        condition: service_healthy
+    logging: *json_logs
 
   api:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://crm:${POSTGRES_PASSWORD:-crm_secret}@postgres:5432/crm
+      # PORT is fixed here so the compose mapping, the Caddy upstream and the
+      # app agree; they previously disagreed (3000 vs 9000).
+      PORT: 9000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-crm}
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "3000:9000"
-    profiles:
-      - production
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "9000"
+    logging: *json_logs
 
   worker:
     build:
       context: ./backend
+    restart: unless-stopped
     command: node dist/worker.js
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://crm:${POSTGRES_PASSWORD:-crm_secret}@postgres:5432/crm
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-crm}
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    profiles:
-      - production
+      migrate:
+        condition: service_completed_successfully
+    logging: *json_logs
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Caddy's own `{$VAR:default}` handles the fallback; compose only passes it through.
+      CRM_SITE_ADDRESS: ${CRM_SITE_ADDRESS:-:80}
+      CRM_API_UPSTREAM: api:9000
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    logging: *json_logs
 
 volumes:
   pgdata:
   caddy_data:
+  caddy_config:

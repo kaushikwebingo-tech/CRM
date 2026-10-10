@@ -2,16 +2,19 @@ import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/commo
 import { ViewsService } from './views.service';
 import { ModulesService } from './modules.service';
 import { CurrentOrg, CurrentUser } from '../common/decorators';
-import { z } from 'zod';
+import { adminPermission, parsePermissions } from '../auth/permissions';
 
-const createSchema = z.object({
-  name: z.string(),
-  type: z.string().optional(),
-  config: z.any().optional(),
-  isDefault: z.boolean().optional(),
-  position: z.number().optional(),
-});
-const updateSchema = createSchema.partial();
+interface SessionUser {
+  id: string;
+  role?: { permissions?: unknown };
+}
+
+function viewActor(user: SessionUser) {
+  return {
+    id: user?.id,
+    canManageViews: adminPermission(parsePermissions(user?.role?.permissions)).manageViews,
+  };
+}
 
 @Controller('modules/:moduleKey/views')
 export class ViewsController {
@@ -27,21 +30,33 @@ export class ViewsController {
   }
 
   @Post()
-  async create(@CurrentOrg() orgId: string, @CurrentUser() user: any, @Param('moduleKey') moduleKey: string, @Body() body: any) {
+  async create(
+    @CurrentOrg() orgId: string,
+    @CurrentUser() user: SessionUser,
+    @Param('moduleKey') moduleKey: string,
+    @Body() body: unknown,
+  ) {
     const mod = await this.modulesService.getByKey(orgId, moduleKey);
-    const data = createSchema.parse(body);
-    return this.viewsService.create(orgId, mod.id, { ...data, ownerId: user.id });
+    return this.viewsService.create(orgId, mod.id, body, user?.id);
   }
 
   @Patch(':id')
-  async update(@CurrentOrg() orgId: string, @Param('id') id: string, @Body() body: any) {
-    const data = updateSchema.parse(body);
-    return this.viewsService.update(orgId, id, data);
+  async update(
+    @CurrentOrg() orgId: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: SessionUser,
+  ) {
+    return this.viewsService.update(orgId, id, body, viewActor(user));
   }
 
   @Delete(':id')
-  async remove(@CurrentOrg() orgId: string, @Param('id') id: string) {
-    await this.viewsService.softDelete(orgId, id);
+  async remove(
+    @CurrentOrg() orgId: string,
+    @Param('id') id: string,
+    @CurrentUser() user: SessionUser,
+  ) {
+    await this.viewsService.softDelete(orgId, id, viewActor(user));
     return { success: true };
   }
 }

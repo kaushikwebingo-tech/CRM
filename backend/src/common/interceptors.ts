@@ -40,7 +40,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const endpoint = `${method} ${request.route?.path ?? request.path ?? request.url}`;
+    const concretePath = (request.originalUrl ?? request.url ?? '').split('?')[0];
+    const endpoint = `${method} ${concretePath || request.route?.path || ''}`;
     const requestHash = createHash('sha256')
       .update(JSON.stringify(request.body ?? null))
       .digest('hex');

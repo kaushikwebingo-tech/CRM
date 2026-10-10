@@ -1,6 +1,74 @@
 # Verification Report — Foundation Plan vs Codebase
 
 Oct 9, 2026 · verified against the running system, not just by reading code
+**Updated Oct 10, 2026 — remediation status added. See "Where this stands now".**
+
+## Where this stands now
+
+Every finding below has been addressed in code unless this section lists it as
+outstanding. The plan itself has been amended where the plan was the thing that
+needed changing; `CRM Foundation Plan — Metadata-Driven Architecture.md` carries
+a revision note explaining each amendment in place.
+
+**Closed, and re-verified against a running build**
+
+| | Finding | How it was closed |
+| --- | --- | --- |
+| C1 | Authorisation unenforced | `auth/permissions.ts` interprets the role document; `auth/record-scope.ts` compiles `own`/`team` into the predicate; `PermissionsGuard` gates 22 admin endpoints; field-level read/write applied in the bundle and on every record response. A Read Only role now gets 403 on create, delete, module and field writes. |
+| C2 | Compiled validation dead | `RecordService.validateData` runs `normalize()` then `valueSchema`, on create, update, bulk and import. Unknown keys, wrong-typed `data`, and read-only fields are 400s. |
+| C3 | One bad value 500s a module | Bulk update routed through the validated path, plus non-throwing `crm_try_*` casts (migration 0004) so legacy bad data degrades to NULL instead of failing the query. |
+| C4 | jsonb writes correct only by accident | Every jsonb parameter now binds through `::text::jsonb`, the one form correct with and without Drizzle's serialiser patch. Seed reverified: `source.config` holds a real options array. |
+| C5 | Migration 0002 never applied | Ordered, tracked runner with `schema_migrations`; 0003 adds the missing indexes, `citext`, `admin_audit`, `idempotency_keys`, `field_sequences`, `teams`. |
+| C6 | Hot field promotion absent | `IndexPromotionService` with the plan's whitelisted DDL; `module_id` as a leading column so the index is actually chosen; reconcile endpoint. |
+| H1 | Idempotency a no-op | Real replay store, keyed on the **resolved** path so one key against two record ids no longer collides. |
+| H2–H8 | Unshaped 500s | Catch-all RFC 7807 filter; boundary coercion in `common/input.ts`. All 21 hostile-input probes now return 400/409 with zero logged 500s. |
+| H9 | No filter components | Operators resolved from each field's declared `operators` in the bundle; multi-value editors for `has_any`/`in`. |
+| H10 | Seed view filters unusable | Seed rewritten: DSL-shaped filters, all field flags and sections, `opt_*` ids, idempotent. |
+| H11 | Mass assignment | Explicit allowlists in fields, modules, views, pipelines and users services. |
+| H12 | Schema version bumped outside the transaction | Atomic `schema_version + 1` inside the caller's transaction, for fields, pipelines and stages. |
+| H13 | `record_links` stale | `syncRecordLinks` on create, update, bulk and import. |
+| H14 | Global search scanned `data::text` | Searches `display_name` + `search_tsv`, with per-module scope branches. |
+| H15 | `javascript:` URLs stored | Scheme allowlist in `url.normalize`. |
+| H16 | Stage IDOR | Every pipeline and stage read/write proved against the caller's org. |
+| H17 | Two pollers, non-atomic claim | Single-statement claim with `FOR UPDATE SKIP LOCKED`; in-API poller off by default; stalled events reclaimed. |
+| H18 | `conditions` ignored | `automations/conditions.ts` evaluates the filter grammar in memory; `trigger.fieldKeys` honoured. |
+| H19 | No error boundary | Route-level and per-cell boundaries. |
+| H20 | `citext` missing | Added, with existing case-variants collapsed first. |
+| H21 | `auto_number` a no-op | Allocated from `field_sequences` inside the write transaction; `is_system`. |
+| H22 | Select stored labels | `normalize` maps a label to its id or rejects. |
+| — | Keyset dropped NULL-sorted rows *(found Oct 10)* | NULL-aware predicate; all rows now page exactly once in both directions. |
+| — | Session secret fallback, no revocation, shared default password | Secret required in production; `user_sessions` index makes revocation real; random per-user password returned once. |
+| — | Anyone could rewrite any saved view | Ownership enforced; shared views need `manageViews`. |
+| — | Caddy unreachable API + no compression | `/api/*` in its own `handle` block ahead of the SPA rewrite; `encode zstd gzip`; asset caching. Validated with `caddy validate`. |
+| — | Bundle 334 KB over a 250 KB ceiling | 216 KB: lazy admin routes, split vendors, and a bounded icon map instead of lucide's full set. |
+| — | `pg_stat_statements` collected nothing | `shared_preload_libraries` set in compose. |
+| — | `docker compose up` started only Postgres and Redis | Profiles removed, migrations as a pre-start job, plan's 4 GB tuning, loopback binds, restart policies, log rotation. |
+
+**Still outstanding — deliberately, and in priority order**
+
+1. **Kanban loads one shared 50-row page.** Plan Section 9 wants a
+   keyset-paginated query and count per column. Cards and column totals are now
+   metadata-driven and terminal-stage aging is fixed, but the per-column fetch
+   is not built. Stages past the first 50 records appear empty.
+2. **No automated test suite.** `backend/test/*.ts` are still hand-run scripts
+   with no runner, no `npm test` and no CI. The hostile-input cases the plan
+   mandates do exist and do pass. Guardrail 18 is not met until they fail a
+   build.
+3. **CSV import is synchronous.** Per-row validation and the error report are in
+   place; the job-id path above 2,000 rows is not.
+4. **No Redis layer or `schema.invalidated` pub/sub** for the compiled schema.
+   Safe on one API process, because the version is in the cache key; required
+   before scaling out.
+5. **Inline grid editing and the command palette** (Plan Section 11) — the grid
+   is read-plus-drawer only.
+6. **Fractional `data.position`** for intra-column kanban ordering.
+7. **TOTP two-factor** — now explicitly deferred in the plan, with the data model
+   it would need.
+8. **Files are on local disk**, not R2. Hardened (size cap, mime allowlist,
+   attachment disposition) but not the plan's storage.
+
+---
+
 
 ## How this was verified
 

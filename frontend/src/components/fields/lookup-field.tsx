@@ -1,19 +1,49 @@
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { FieldInputProps, FieldCellProps } from './types';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Link2, Hash } from 'lucide-react';
+import { Link2, Hash, Loader2 } from 'lucide-react';
+import { api } from '@/api/client';
+import { fetchRecords } from '@/api/records';
+
+interface OrgUser {
+  id: string;
+  fullName: string;
+  email: string;
+  isActive?: boolean;
+}
+
 
 export function UserInput({ value, onChange, error, disabled }: FieldInputProps): JSX.Element {
+  const { data: users, isLoading } = useQuery({
+    queryKey: ['users', 'active'],
+    queryFn: () => api.get<OrgUser[]>('/api/users'),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const options = useMemo(
+    () => (users ?? []).filter((u) => u.isActive !== false),
+    [users],
+  );
+
   return (
     <div>
-      <Input
-        type="text"
-        value={value ?? ''}
+      <select
+        value={typeof value === 'string' ? value : ''}
         onChange={(e) => onChange(e.target.value || null)}
-        disabled={disabled}
-        placeholder="Assign user ID"
-        className={error ? 'border-red-500' : ''}
-      />
+        disabled={disabled || isLoading}
+        className={`h-9 w-full rounded-md border bg-white px-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+          error ? 'border-red-500' : 'border-slate-300'
+        }`}
+      >
+        <option value="">{isLoading ? 'Loading people…' : 'Unassigned'}</option>
+        {options.map((user) => (
+          <option key={user.id} value={user.id}>
+            {user.fullName} ({user.email})
+          </option>
+        ))}
+      </select>
       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
   );
@@ -34,18 +64,111 @@ export function UserCell({ value, record }: FieldCellProps): JSX.Element {
   return <span className="text-xs text-slate-500 font-mono truncate">{String(value)}</span>;
 }
 
-export function LookupInput({ value, onChange, error, disabled }: FieldInputProps): JSX.Element {
+
+export function LookupInput({
+  field,
+  value,
+  onChange,
+  error,
+  disabled,
+  record,
+}: FieldInputProps & { record?: { _expanded?: Record<string, { displayName?: string }> } }): JSX.Element {
+  const targetModuleKey = (field.config as { targetModuleKey?: string })?.targetModuleKey;
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const { data, isFetching } = useQuery({
+    queryKey: ['lookup', targetModuleKey, search],
+    queryFn: () =>
+      fetchRecords(targetModuleKey as string, {
+        q: search || undefined,
+        limit: 20,
+        fields: ['display_name'],
+      }),
+    enabled: Boolean(targetModuleKey) && open,
+    staleTime: 30 * 1000,
+  });
+
+  const selectedLabel = record?._expanded?.[field.key]?.displayName;
+
+  if (!targetModuleKey) {
+    return (
+      <p className="text-xs text-amber-600">
+        This lookup has no target module configured yet.
+      </p>
+    );
+  }
+
   return (
-    <div>
-      <Input
-        type="text"
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value || null)}
-        disabled={disabled}
-        placeholder="Target record ID"
-        className={error ? 'border-red-500' : ''}
-      />
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+    <div className="space-y-1">
+      {value && !open ? (
+        <div className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm">
+          <Link2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <span className="min-w-0 flex-1 truncate">
+            {selectedLabel ?? String(value)}
+          </span>
+          {!disabled && (
+            <button
+              type="button"
+              className="text-xs text-slate-500 hover:text-slate-800"
+              onClick={() => setOpen(true)}
+            >
+              Change
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <Input
+            type="text"
+            value={search}
+            disabled={disabled}
+            onChange={(e) => setSearch(e.target.value)}
+            onFocus={() => setOpen(true)}
+            placeholder={`Search ${targetModuleKey.replace(/_/g, ' ')}…`}
+            className={error ? 'border-red-500' : ''}
+          />
+          {open && (
+            <div className="max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-sm">
+              {isFetching && (
+                <div className="flex items-center gap-2 px-2 py-2 text-xs text-slate-500">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Searching…
+                </div>
+              )}
+              {!isFetching && (data?.records.length ?? 0) === 0 && (
+                <p className="px-2 py-2 text-xs text-slate-400">No matches</p>
+              )}
+              {data?.records.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="block w-full truncate px-2 py-1.5 text-left text-sm hover:bg-slate-50"
+                  onClick={() => {
+                    onChange(option.id);
+                    setOpen(false);
+                    setSearch('');
+                  }}
+                >
+                  {option.display_name}
+                </button>
+              ))}
+              {value && (
+                <button
+                  type="button"
+                  className="block w-full border-t border-slate-100 px-2 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50"
+                  onClick={() => {
+                    onChange(null);
+                    setOpen(false);
+                  }}
+                >
+                  Clear selection
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
   );
 }

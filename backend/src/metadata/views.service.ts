@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { DATABASE } from '../db/connection';
 import { views } from '../db/schema';
 import { eq, and, isNull, asc } from 'drizzle-orm';
-import { NotFoundError } from '../common/errors';
+import { NotFoundError, ForbiddenError } from '../common/errors';
 import { z } from 'zod';
 
 /** Only these columns may come from a request body. */
@@ -47,7 +47,36 @@ export class ViewsService {
     return view;
   }
 
-  async update(orgId: string, viewId: string, input: unknown) {
+  private async assertCanModify(
+    orgId: string,
+    viewId: string,
+    actor: { id: string; canManageViews: boolean },
+  ) {
+    const [view] = await this.db
+      .select()
+      .from(views)
+      .where(and(eq(views.id, viewId), eq(views.orgId, orgId), isNull(views.deletedAt)))
+      .limit(1);
+    if (!view) throw new NotFoundError('View not found');
+
+    const isOwner = view.ownerId && view.ownerId === actor.id;
+    if (!isOwner && !actor.canManageViews) {
+      throw new ForbiddenError(
+        view.ownerId
+          ? 'This view belongs to another user'
+          : 'You do not have permission to change shared views',
+      );
+    }
+    return view;
+  }
+
+  async update(
+    orgId: string,
+    viewId: string,
+    input: unknown,
+    actor: { id: string; canManageViews: boolean },
+  ) {
+    await this.assertCanModify(orgId, viewId, actor);
     const data = viewSchema.partial().parse(input ?? {});
     const [view] = await this.db
       .update(views)
@@ -63,7 +92,18 @@ export class ViewsService {
     return view;
   }
 
-  async softDelete(orgId: string, viewId: string) {
-    await this.db.update(views).set({ deletedAt: new Date() }).where(and(eq(views.id, viewId), eq(views.orgId, orgId)));
+  async softDelete(
+    orgId: string,
+    viewId: string,
+    actor: { id: string; canManageViews: boolean },
+  ) {
+    const view = await this.assertCanModify(orgId, viewId, actor);
+    if (view.isDefault) {
+      throw new ForbiddenError('The default view cannot be deleted');
+    }
+    await this.db
+      .update(views)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(views.id, viewId), eq(views.orgId, orgId)));
   }
 }

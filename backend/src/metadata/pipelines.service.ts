@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { z } from 'zod';
 import { DATABASE } from '../db/connection';
-import { pipelines, pipelineStages, records } from '../db/schema';
+import { pipelines, pipelineStages, records, recordEvents, outboxEvents } from '../db/schema';
 import { eq, and, isNull, asc, ne, sql as drizzleSql } from 'drizzle-orm';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../common/errors';
 import { ModulesService } from './modules.service';
@@ -32,13 +32,6 @@ export class PipelinesService {
     private readonly audit: AuditService,
   ) {}
 
-  /**
-   * Resolves a pipeline and proves it belongs to the caller's org.
-   *
-   * Stage reads and writes previously filtered on `pipelineId` alone, so a
-   * pipeline id from another organisation was accepted — a cross-tenant read
-   * and write of someone else's pipeline configuration.
-   */
   private async requirePipeline(orgId: string, pipelineId: string) {
     const [pipeline] = await this.db
       .select()
@@ -95,8 +88,6 @@ export class PipelinesService {
         })
         .returning();
 
-      // The pipeline and its stages are part of the compiled schema the client
-      // renders from, so a change has to invalidate it.
       await this.modulesService.bumpSchemaVersion(moduleId, tx);
       await this.audit.record(tx, {
         orgId, actorId, entityType: 'pipeline', entityId: pipeline.id,
@@ -137,10 +128,7 @@ export class PipelinesService {
     });
   }
 
-  /**
-   * Deleting a pipeline would orphan the `stage_id` of every record in it, so
-   * it is blocked while any record still points at one of its stages.
-   */
+
   async softDeletePipeline(orgId: string, pipelineId: string, actorId?: string) {
     const existing = await this.requirePipeline(orgId, pipelineId);
 
@@ -240,11 +228,7 @@ export class PipelinesService {
     });
   }
 
-  /**
-   * Plan Section 9: "Blocked while records sit in it. The UI asks the admin to
-   * pick a destination stage, moves those records in one bulk update, then
-   * soft-deletes the stage. Never orphan a record's stage_id."
-   */
+  
   async softDeleteStage(
     orgId: string,
     stageId: string,
@@ -298,10 +282,38 @@ export class PipelinesService {
 
     await this.db.transaction(async (tx: any) => {
       if (movedTo) {
-        await tx
+        const moved = await tx
           .update(records)
           .set({ stageId: movedTo, stageSince: new Date(), updatedAt: new Date() })
-          .where(and(eq(records.stageId, stageId), isNull(records.deletedAt)));
+          .where(and(eq(records.stageId, stageId), isNull(records.deletedAt)))
+          .returning({ id: records.id, orgId: records.orgId, moduleId: records.moduleId });
+
+        for (const row of moved) {
+          await tx.insert(recordEvents).values({
+            orgId: row.orgId,
+            recordId: row.id,
+            moduleId: row.moduleId,
+            type: 'stage_changed',
+            actorId: actorId ?? null,
+            actorType: 'user',
+            changes: { stage_id: { from: stageId, to: movedTo } } as never,
+            payload: { reason: 'stage_deleted', from_stage_id: stageId, to_stage_id: movedTo } as never,
+          });
+
+          await tx.insert(outboxEvents).values({
+            orgId: row.orgId,
+            eventType: 'record.stage_changed',
+            aggregateId: row.id,
+            payload: {
+              recordId: row.id,
+              changes: { stage_id: { from: stageId, to: movedTo } },
+              actorId: actorId ?? null,
+              reason: 'stage_deleted',
+              causationChain: [],
+            } as never,
+            availableAt: new Date(),
+          });
+        }
       }
       await tx
         .update(pipelineStages)

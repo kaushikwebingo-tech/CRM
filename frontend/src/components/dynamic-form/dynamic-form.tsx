@@ -8,6 +8,50 @@ import { getFieldComponent } from '@/components/fields/registry';
 import { CellBoundary } from '@/components/error-boundary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/api/client';
+
+interface OrgUser {
+  id: string;
+  fullName: string;
+  email: string;
+  isActive?: boolean;
+}
+
+
+function OwnerSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: unknown;
+  onChange: (v: string | null) => void;
+  disabled?: boolean;
+}): JSX.Element {
+  const { data: users, isLoading } = useQuery({
+    queryKey: ['users', 'active'],
+    queryFn: () => api.get<OrgUser[]>('/api/users'),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  return (
+    <select
+      value={typeof value === 'string' ? value : ''}
+      onChange={(e) => onChange(e.target.value || null)}
+      disabled={disabled || isLoading}
+      className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+    >
+      <option value="">{isLoading ? 'Loading people…' : 'Unassigned'}</option>
+      {(users ?? [])
+        .filter((u) => u.isActive !== false)
+        .map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.fullName}
+          </option>
+        ))}
+    </select>
+  );
+}
 
 export interface DynamicFormProps {
   module: ModuleDef;
@@ -37,8 +81,6 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
     ...(initialValues?.data || {}),
   };
 
-  // Plan Section 11: the resolver is built from field metadata at runtime, so
-  // a new field type validates without a frontend change.
   const formSchema = useMemo(() => buildFormSchema(module), [module]);
 
   const {
@@ -52,8 +94,6 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
     resolver: zodResolver(formSchema as never),
   });
 
-  // Sections appear in field order, so an admin's ordering in the builder is
-  // the ordering the form shows.
   const sections = Array.from(
     new Set(
       [...module.fields]
@@ -74,9 +114,6 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
         data: dynamicData,
       });
     } catch (err: unknown) {
-      // The API returns RFC 7807 with a `fields` array keyed by field key
-      // (Plan Section 7). Mapping it back onto the inputs is the whole point of
-      // that contract; previously only a generic banner was shown.
       if (err instanceof ApiError) {
         const mapped = err.fieldErrors;
         const keys = Object.keys(mapped);
@@ -120,6 +157,17 @@ export function DynamicForm({ module, initialValues, onSubmit, onCancel }: Dynam
           {errors.display_name && (
             <p className="mt-1 text-xs text-red-500">{String(errors.display_name.message)}</p>
           )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Owner</label>
+          <Controller
+            name="owner_id"
+            control={control}
+            render={({ field }) => (
+              <OwnerSelect value={field.value} onChange={field.onChange} disabled={submitting} />
+            )}
+          />
         </div>
 
         {module.hasPipeline && stages.length > 0 && (
