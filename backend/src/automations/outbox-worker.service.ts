@@ -403,7 +403,7 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
     if (!hasFailure) {
       await this.sql`
         UPDATE outbox_events
-        SET status = 'done', processed_at = now()
+        SET status = 'done', processed_at = now(), attempts = COALESCE(attempts, 0) + 1
         WHERE id = ${event.id}
       `;
     } else {
@@ -413,7 +413,9 @@ export class OutboxWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private async handleEventFailure(event: any, errorMessage: string): Promise<void> {
     const nextAttempts = (event.attempts || 0) + 1;
-    const delays = [1_000, 10_000, 60_000, 300_000, 1_800_000];
+    const delays = process.env.NODE_ENV === 'test' || process.env.FAST_RETRY === 'true'
+      ? [100, 200, 500, 1000, 2000]
+      : [1_000, 10_000, 60_000, 300_000, 1_800_000];
     const delayMs = delays[nextAttempts - 1] ?? 1_800_000;
     const nextAvailableAt = new Date(Date.now() + delayMs);
 

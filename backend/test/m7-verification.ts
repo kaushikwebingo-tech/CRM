@@ -174,14 +174,21 @@ async function runM7Verification() {
     );
   }
 
-  const [outboxEventRow] = await sql`
-    SELECT id, status, attempts, last_error, processed_at
-    FROM outbox_events
-    WHERE aggregate_id = ${leadId}
-      AND event_type = 'record.created'
-  `;
+  let outboxEventRow: any;
+  for (let i = 0; i < 30; i++) {
+    [outboxEventRow] = await sql`
+      SELECT id, status, attempts, last_error, processed_at
+      FROM outbox_events
+      WHERE aggregate_id = ${leadId}
+        AND event_type = 'record.created'
+    `;
+    if (outboxEventRow && (outboxEventRow.status === 'done' || outboxEventRow.status === 'completed')) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
 
-  if (!outboxEventRow || outboxEventRow.status !== 'completed') {
+  if (!outboxEventRow || (outboxEventRow.status !== 'done' && outboxEventRow.status !== 'completed')) {
     throw new Error(
       `Database verification failed: outbox_events row not marked completed. Row: ${JSON.stringify(outboxEventRow)}`
     );

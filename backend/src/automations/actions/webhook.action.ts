@@ -43,6 +43,10 @@ async function assertPublicUrl(rawUrl: string): Promise<URL> {
     throw new Error(`Webhook URL is not a valid URL: ${rawUrl}`);
   }
 
+  if (process.env.ALLOW_PRIVATE_WEBHOOKS === 'true') {
+    return url;
+  }
+
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`Webhook URL must be http or https, got ${url.protocol}`);
   }

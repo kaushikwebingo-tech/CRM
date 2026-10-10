@@ -28,15 +28,13 @@ async function runM8Verification() {
     Cookie: sessionCookie,
   };
 
-  const existingModRes = await fetch(`${baseUrl}/modules/site_visit`, { headers: authHeaders });
-  if (existingModRes.ok) {
-    await fetch(`${baseUrl}/modules/site_visit`, { method: 'DELETE', headers: authHeaders });
-    await sql`DELETE FROM records WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`;
-    await sql`DELETE FROM fields WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`;
-    await sql`DELETE FROM pipeline_stages WHERE pipeline_id IN (SELECT id FROM pipelines WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit'))`;
-    await sql`DELETE FROM pipelines WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`;
-    await sql`DELETE FROM modules WHERE key = 'site_visit'`;
-  }
+  await sql`DELETE FROM record_events WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`.catch(() => {});
+  await sql`DELETE FROM records WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`.catch(() => {});
+  await sql`DELETE FROM fields WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`.catch(() => {});
+  await sql`DELETE FROM pipeline_stages WHERE pipeline_id IN (SELECT id FROM pipelines WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit'))`.catch(() => {});
+  await sql`DELETE FROM pipelines WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`.catch(() => {});
+  await sql`DELETE FROM views WHERE module_id IN (SELECT id FROM modules WHERE key = 'site_visit')`.catch(() => {});
+  await sql`DELETE FROM modules WHERE key = 'site_visit'`.catch(() => {});
 
   const createModRes = await fetch(`${baseUrl}/modules`, {
     method: 'POST',
@@ -278,7 +276,7 @@ async function runM8Verification() {
       email: testUserEmail,
       fullName: 'Inspector Kunal Sharma',
       roleId: roleId,
-      password: 'password123',
+      password: 'password12345',
     }),
   });
 
