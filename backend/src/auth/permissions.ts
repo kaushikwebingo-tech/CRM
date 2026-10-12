@@ -24,6 +24,8 @@ export const adminPermissionSchema = z.object({
   manageUsers: z.boolean().default(false),
   manageAutomations: z.boolean().default(false),
   manageViews: z.boolean().default(false),
+  manageConnectors: z.boolean().default(false),
+  manageTemplates: z.boolean().default(false),
   import: z.boolean().default(false),
   export: z.boolean().default(false),
 });
@@ -78,6 +80,8 @@ export function adminPermission(permissions: Permissions): AdminPermission {
       manageUsers: true,
       manageAutomations: true,
       manageViews: true,
+      manageConnectors: true,
+      manageTemplates: true,
       import: true,
       export: true,
     };

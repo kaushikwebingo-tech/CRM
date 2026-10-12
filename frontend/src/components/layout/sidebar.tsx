@@ -1,5 +1,15 @@
 import { NavLink } from 'react-router-dom';
-import { Users, Zap, Shield, Layers, Menu, Package2, type LucideIcon } from 'lucide-react';
+import {
+  Users,
+  Zap,
+  Shield,
+  Layers,
+  Menu,
+  Package2,
+  Plug,
+  FileText,
+  type LucideIcon,
+} from 'lucide-react';
 import { resolveModuleIcon } from '@/lib/module-icons';
 import { useUiStore } from '@/stores/ui';
 import { useSchema } from '@/hooks/use-schema';
@@ -10,8 +20,6 @@ export function Sidebar(): JSX.Element {
   const { sidebarOpen, toggleSidebar } = useUiStore();
   const { modules } = useSchema();
 
-  // Resolved from a bounded set rather than lucide's full icon map, which used
-  // to put every icon in the bundle (see lib/module-icons).
   const getIcon = (iconName: string | null): LucideIcon => resolveModuleIcon(iconName);
 
   return (
@@ -105,6 +113,30 @@ export function Sidebar(): JSX.Element {
           >
             <Zap className="h-5 w-5 shrink-0" />
             {sidebarOpen && <span>Automations</span>}
+          </NavLink>
+          <NavLink
+            to="/settings/connectors"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              )
+            }
+          >
+            <Plug className="h-5 w-5 shrink-0" />
+            {sidebarOpen && <span>Connectors</span>}
+          </NavLink>
+          <NavLink
+            to="/settings/templates"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              )
+            }
+          >
+            <FileText className="h-5 w-5 shrink-0" />
+            {sidebarOpen && <span>Templates</span>}
           </NavLink>
         </nav>
       </div>

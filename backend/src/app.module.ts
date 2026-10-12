@@ -6,6 +6,8 @@ import { MetadataModule } from './metadata/metadata.module';
 import { RecordsModule } from './records/records.module';
 import { FilesModule } from './files/files.module';
 import { AutomationsModule } from './automations/automations.module';
+import { ConnectorsModule } from './connectors/connectors.module';
+import { TemplatesModule } from './templates/templates.module';
 import { AuthGuard } from './auth/auth.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { RateLimitGuard } from './common/rate-limit.guard';
@@ -20,6 +22,8 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     RecordsModule,
     FilesModule,
     AutomationsModule,
+    ConnectorsModule,
+    TemplatesModule,
   ],
   providers: [
     {

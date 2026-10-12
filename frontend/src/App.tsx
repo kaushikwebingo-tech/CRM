@@ -10,15 +10,6 @@ import { LoginPage } from '@/pages/login';
 import { Dashboard } from '@/pages/dashboard';
 import { ModuleList } from '@/pages/module-list';
 
-/**
- * Route-level code splitting.
- *
- * Plan Section 14 budgets 180 KB gzipped for the initial bundle, with a 250 KB
- * ceiling; a single chunk with every settings screen in it came to 334 KB. The
- * screens a salesperson uses all day — the list and the record — stay in the
- * main chunk; the admin screens, which are large and rarely opened, load on
- * demand.
- */
 const RecordDetail = lazy(() =>
   import('@/pages/record-detail').then((m) => ({ default: m.RecordDetail })),
 );
@@ -37,8 +28,13 @@ const SettingsUsersPage = lazy(() =>
 const SettingsAutomationsPage = lazy(() =>
   import('@/pages/settings-automations').then((m) => ({ default: m.SettingsAutomationsPage })),
 );
+const SettingsConnectorsPage = lazy(() =>
+  import('@/pages/settings-connectors').then((m) => ({ default: m.SettingsConnectorsPage })),
+);
+const SettingsTemplatesPage = lazy(() =>
+  import('@/pages/settings-templates').then((m) => ({ default: m.SettingsTemplatesPage })),
+);
 
-/** A layout-shaped placeholder, so a lazy route does not shift the page. */
 function RouteFallback(): JSX.Element {
   return (
     <div className="space-y-4">
@@ -53,8 +49,6 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      // Plan Section 11: the schema bundle is "revalidated with the ETag on
-      // focus". The browser handles the conditional request; a 304 is cheap.
       refetchOnWindowFocus: true,
     },
   },
@@ -64,30 +58,32 @@ export function App(): JSX.Element {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-      <ConfirmDialogProvider>
-        <Toaster>
-          <BrowserRouter>
-          <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<AppLayout />}>
-              <Route index element={<Dashboard />} />
-              <Route path="m/:moduleKey" element={<ModuleList />} />
-              <Route path="m/:moduleKey/:recordId" element={<RecordDetail />} />
-              <Route path="m/:moduleKey/detail/:recordId" element={<RecordDetail />} />
-              <Route path="settings/modules" element={<SettingsModulesPage />} />
-              <Route path="settings/modules/:moduleKey" element={<ModuleBuilderPage />} />
-              <Route path="settings/roles" element={<SettingsRolesPage />} />
-              <Route path="settings/users" element={<SettingsUsersPage />} />
-              <Route path="settings/automations" element={<SettingsAutomationsPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
-          </Suspense>
-        </BrowserRouter>
-      </Toaster>
-    </ConfirmDialogProvider>
+        <ConfirmDialogProvider>
+          <Toaster>
+            <BrowserRouter>
+              <Suspense fallback={<RouteFallback />}>
+                <Routes>
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/" element={<AppLayout />}>
+                    <Route index element={<Dashboard />} />
+                    <Route path="m/:moduleKey" element={<ModuleList />} />
+                    <Route path="m/:moduleKey/:recordId" element={<RecordDetail />} />
+                    <Route path="m/:moduleKey/detail/:recordId" element={<RecordDetail />} />
+                    <Route path="settings/modules" element={<SettingsModulesPage />} />
+                    <Route path="settings/modules/:moduleKey" element={<ModuleBuilderPage />} />
+                    <Route path="settings/roles" element={<SettingsRolesPage />} />
+                    <Route path="settings/users" element={<SettingsUsersPage />} />
+                    <Route path="settings/automations" element={<SettingsAutomationsPage />} />
+                    <Route path="settings/connectors" element={<SettingsConnectorsPage />} />
+                    <Route path="settings/templates" element={<SettingsTemplatesPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Route>
+                </Routes>
+              </Suspense>
+            </BrowserRouter>
+          </Toaster>
+        </ConfirmDialogProvider>
       </QueryClientProvider>
     </ErrorBoundary>
-);
+  );
 }
