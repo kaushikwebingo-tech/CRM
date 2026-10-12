@@ -26,12 +26,12 @@ function isPrivateAddress(ip: string): boolean {
     return true;
   }
   const [a, b] = parts;
-  if (a === 0 || a === 10 || a === 127) return true;         // this host, private, loopback
-  if (a === 169 && b === 254) return true;                   // link-local / cloud metadata
-  if (a === 172 && b >= 16 && b <= 31) return true;          // private
-  if (a === 192 && b === 168) return true;                   // private
-  if (a === 100 && b >= 64 && b <= 127) return true;         // carrier-grade NAT
-  if (a >= 224) return true;                                 // multicast / reserved
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a >= 224) return true;
   return false;
 }
 

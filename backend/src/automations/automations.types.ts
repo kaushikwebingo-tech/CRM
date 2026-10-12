@@ -33,6 +33,8 @@ export interface ActionContext {
     ownerId?: string;
   };
   resolve(template: string): string;
+  sql?: any;
+  redis?: any;
 }
 
 export interface ActionResult {
@@ -54,6 +56,65 @@ export interface ActionHandler<TConfig = any> {
 export interface AutomationTrigger {
   eventType: string;
   moduleKey?: string;
+  fieldKey?: string;
+  toValue?: unknown;
+  fromStageIds?: string[];
+  toStageIds?: string[];
+  fieldKeys?: string[];
+  offsetDays?: number;
+  timeOfDay?: string;
+  cron?: string;
+  channel?: string;
+  sourceId?: string;
+  [key: string]: unknown;
+}
+
+export type AutomationNodeType = 'action' | 'branch' | 'wait' | 'stop';
+
+export interface ActionNode {
+  id: string;
+  type: 'action';
+  handler: string;
+  config: Record<string, unknown>;
+  next: string | null;
+}
+
+export interface BranchNode {
+  id: string;
+  type: 'branch';
+  conditions: Record<string, unknown>;
+  onTrue: string;
+  onFalse: string | null;
+}
+
+export interface WaitConfig {
+  durationMinutes?: number;
+  durationHours?: number;
+  durationDays?: number;
+  fieldKey?: string;
+  offsetDays?: number;
+}
+
+export interface WaitNode {
+  id: string;
+  type: 'wait';
+  mode: 'duration' | 'until_field';
+  config: WaitConfig;
+  next: string | null;
+}
+
+export interface StopNode {
+  id: string;
+  type: 'stop';
+  reason?: string;
+}
+
+export type AutomationNode = ActionNode | BranchNode | WaitNode | StopNode;
+
+export interface AutomationSettings {
+  runOnce?: boolean;
+  reentrant?: boolean;
+  maxRunsPerRecordPerDay?: number;
 }
 
 export interface AutomationActionConfig {
@@ -69,9 +130,25 @@ export interface Automation {
   isActive: boolean;
   trigger: AutomationTrigger;
   conditions: Record<string, unknown> | null;
-  actions: AutomationActionConfig[];
+  actions: AutomationActionConfig[] | AutomationNode[] | { nodes: AutomationNode[]; settings?: AutomationSettings };
+  nodes?: AutomationNode[];
+  settings?: AutomationSettings;
   createdAt: string;
   deletedAt: string | null;
+}
+
+export interface NodeStepLog {
+  nodeId: string;
+  type: AutomationNodeType | 'trigger';
+  handler?: string;
+  status: 'success' | 'failed' | 'simulated' | 'waiting' | 'stopped' | 'skipped' | 'matched';
+  outcome?: boolean;
+  nextNodeId?: string | null;
+  durationMs?: number;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+  timestamp?: string;
 }
 
 export interface AutomationRun {
@@ -79,8 +156,18 @@ export interface AutomationRun {
   orgId: string;
   automationId: string;
   recordId: string | null;
-  status: 'running' | 'success' | 'failed' | 'skipped';
+  status: 'running' | 'waiting' | 'success' | 'failed' | 'skipped' | 'cancelled';
   log: Record<string, unknown> | null;
   startedAt: string;
   finishedAt: string | null;
+}
+
+export interface DryRunResult {
+  success: boolean;
+  recordId: string;
+  displayName: string;
+  conditionsPassed: boolean;
+  message?: string;
+  steps: NodeStepLog[];
+  finalState?: Record<string, unknown>;
 }

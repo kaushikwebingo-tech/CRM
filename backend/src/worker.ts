@@ -6,6 +6,7 @@ import postgres from 'postgres';
 import Redis from 'ioredis';
 import { AutomationsService } from './automations/automations.service';
 import { OutboxWorkerService } from './automations/outbox-worker.service';
+import { GraphRunnerService } from './automations/graph-runner.service';
 
 const databaseUrl = process.env.DATABASE_URL || 'postgresql://crm:crm_secret@localhost:5432/crm';
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -13,8 +14,9 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const sql = postgres(databaseUrl);
 const redis = new Redis(redisUrl);
 
-const automationsService = new AutomationsService(sql);
-const worker = new OutboxWorkerService(sql, redis, automationsService);
+const graphRunner = new GraphRunnerService(sql, redis);
+const automationsService = new AutomationsService(sql, graphRunner);
+const worker = new OutboxWorkerService(sql, redis, automationsService, graphRunner);
 
 worker.start();
 

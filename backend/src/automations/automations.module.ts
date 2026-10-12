@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AutomationsController } from './automations.controller';
 import { AutomationsService } from './automations.service';
 import { OutboxWorkerService } from './outbox-worker.service';
+import { GraphRunnerService } from './graph-runner.service';
 import { WebhookActionHandler } from './actions/webhook.action';
 
 @Module({
@@ -9,8 +10,9 @@ import { WebhookActionHandler } from './actions/webhook.action';
   providers: [
     AutomationsService,
     OutboxWorkerService,
+    GraphRunnerService,
     WebhookActionHandler,
   ],
-  exports: [AutomationsService, OutboxWorkerService],
+  exports: [AutomationsService, OutboxWorkerService, GraphRunnerService],
 })
 export class AutomationsModule {}
