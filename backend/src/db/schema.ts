@@ -234,6 +234,10 @@ export const templates = pgTable('templates', {
   subject: text('subject'),
   body: text('body').notNull(),
   variables: jsonb('variables').default([]).notNull(),
+  dltTemplateId: text('dlt_template_id'),
+  dltHeader: text('dlt_header'),
+  approvalStatus: text('approval_status').default('approved'),
+  category: text('category').default('utility'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
@@ -284,3 +288,74 @@ export const teamMembers = pgTable('team_members', {
   teamId: uuid('team_id').notNull(),
   userId: uuid('user_id').notNull(),
 });
+
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id).notNull(),
+    recordId: uuid('record_id').references(() => records.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id').notNull(),
+    channel: text('channel').notNull(),
+    direction: text('direction').notNull(),
+    connectorId: uuid('connector_id').references(() => connectors.id),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    subject: text('subject'),
+    bodyText: text('body_text'),
+    bodyHtml: text('body_html'),
+    attachments: jsonb('attachments').default([]).notNull(),
+    templateId: uuid('template_id').references(() => templates.id, { onDelete: 'set null' }),
+    providerMessageId: text('provider_message_id'),
+    inReplyTo: text('in_reply_to'),
+    status: text('status').notNull(),
+    statusDetail: text('status_detail'),
+    sentBy: uuid('sent_by').references(() => users.id, { onDelete: 'set null' }),
+    automationRunId: bigint('automation_run_id', { mode: 'number' }),
+    metadata: jsonb('metadata').default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    unqProviderMsg: uniqueIndex('idx_messages_provider_unq').on(table.connectorId, table.providerMessageId),
+    idxRecord: index('idx_messages_rec_list').on(table.orgId, table.recordId, table.createdAt),
+    idxThread: index('idx_messages_th_list').on(table.orgId, table.threadId, table.createdAt),
+  }),
+);
+
+export const suppressionList = pgTable(
+  'suppression_list',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id).notNull(),
+    address: text('address').notNull(),
+    channel: text('channel').default('email').notNull(),
+    reason: text('reason').notNull(),
+    detail: text('detail'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    unqAddress: uniqueIndex('idx_suppression_addr_unq').on(table.orgId, table.address, table.channel),
+  }),
+);
+
+export const consents = pgTable(
+  'consents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id).notNull(),
+    recordId: uuid('record_id').references(() => records.id, { onDelete: 'cascade' }).notNull(),
+    channel: text('channel').notNull(),
+    purpose: text('purpose').notNull(),
+    status: text('status').notNull(),
+    source: text('source').notNull(),
+    evidence: jsonb('evidence').default({}).notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true }),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    unqConsent: uniqueIndex('idx_consents_unq').on(table.orgId, table.recordId, table.channel, table.purpose),
+    idxRecord: index('idx_consents_rec').on(table.orgId, table.recordId),
+  }),
+);
+

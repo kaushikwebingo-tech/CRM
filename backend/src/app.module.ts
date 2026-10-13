@@ -8,6 +8,9 @@ import { FilesModule } from './files/files.module';
 import { AutomationsModule } from './automations/automations.module';
 import { ConnectorsModule } from './connectors/connectors.module';
 import { TemplatesModule } from './templates/templates.module';
+import { EmailModule } from './email/email.module';
+import { ConsentModule } from './consents/consent.module';
+import { MessagingModule } from './messaging/messaging.module';
 import { AuthGuard } from './auth/auth.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { RateLimitGuard } from './common/rate-limit.guard';
@@ -24,6 +27,9 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     AutomationsModule,
     ConnectorsModule,
     TemplatesModule,
+    EmailModule,
+    ConsentModule,
+    MessagingModule,
   ],
   providers: [
     {

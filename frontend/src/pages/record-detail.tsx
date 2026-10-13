@@ -13,10 +13,20 @@ import {
   uploadFile,
   TimelineEvent,
 } from '@/api/records';
+import { fetchRecordMessages, sendRecordEmail, MessageItem } from '@/api/email';
+import { sendWhatsApp, sendSms, fetchSessionWindow } from '@/api/messaging';
 import { getFieldComponent } from '@/components/fields/registry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
@@ -41,6 +51,8 @@ import {
   File,
   X,
   Plus,
+  ArrowUpRight,
+  ArrowDownLeft,
 } from 'lucide-react';
 
 export function RecordDetail(): JSX.Element {
@@ -78,8 +90,96 @@ export function RecordDetail(): JSX.Element {
   const [copiedId, setCopiedId] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [pendingNoteFiles, setPendingNoteFiles] = useState<any[]>([]);
-  const [timelineFilter, setTimelineFilter] = useState<'all' | 'updated' | 'stage_changed' | 'note' | 'attachment'>('all');
+  const [timelineFilter, setTimelineFilter] = useState<'all' | 'updated' | 'stage_changed' | 'note' | 'attachment' | 'message'>('all');
   const [isDirty, setIsDirty] = useState(false);
+
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [composeChannel, setComposeChannel] = useState<'email' | 'whatsapp' | 'sms'>('email');
+  const [emailTo, setEmailTo] = useState('');
+  const [composePhone, setComposePhone] = useState('');
+  const [composeDltTemplateId, setComposeDltTemplateId] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+
+  const { data: recordMessages = [], refetch: refetchMessages } = useQuery<MessageItem[]>({
+    queryKey: ['records', recordId, 'messages'],
+    queryFn: () => (recordId ? fetchRecordMessages(recordId) : []),
+    enabled: Boolean(recordId),
+  });
+
+  const { data: sessionWindow } = useQuery({
+    queryKey: ['records', recordId, 'session-window'],
+    queryFn: () => (recordId ? fetchSessionWindow(recordId) : null),
+    enabled: Boolean(recordId),
+  });
+
+  const sendEmailMut = useMutation({
+    mutationFn: (payload: { recordId: string; toEmail: string; subject: string; bodyText: string }) =>
+      sendRecordEmail(payload),
+    onSuccess: () => {
+      setEmailModalOpen(false);
+      setEmailSubject('');
+      setEmailBody('');
+      refetchMessages();
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      toast({
+        title: 'Email dispatched',
+        description: 'Outbound email sent and logged to timeline.',
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Failed to send email',
+        description: err.message || 'Error dispatching mail',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const sendWhatsAppMut = useMutation({
+    mutationFn: (payload: { recordId: string; toPhone?: string; text: string }) =>
+      sendWhatsApp(payload),
+    onSuccess: () => {
+      setEmailModalOpen(false);
+      setEmailBody('');
+      refetchMessages();
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      queryClient.invalidateQueries({ queryKey: ['records', recordId, 'session-window'] });
+      toast({
+        title: 'WhatsApp message sent',
+        description: 'Outbound WhatsApp message dispatched and logged.',
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Failed to send WhatsApp message',
+        description: err.message || 'Error dispatching message',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const sendSmsMut = useMutation({
+    mutationFn: (payload: { recordId: string; toPhone?: string; text: string; dltTemplateId?: string }) =>
+      sendSms(payload),
+    onSuccess: () => {
+      setEmailModalOpen(false);
+      setEmailBody('');
+      refetchMessages();
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      toast({
+        title: 'SMS dispatched',
+        description: 'Outbound SMS sent and logged.',
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Failed to send SMS',
+        description: err.message || 'Error dispatching SMS',
+        variant: 'destructive',
+      });
+    },
+  });
 
   useEffect(() => {
     if (record) {
@@ -99,7 +199,7 @@ export function RecordDetail(): JSX.Element {
   );
 
   useEffect(() => {
-    if (sections.length > 0 && (!activeTab || (!sections.includes(activeTab) && !['__timeline__', '__notes__', '__attachments__'].includes(activeTab)))) {
+    if (sections.length > 0 && (!activeTab || (!sections.includes(activeTab) && !['__timeline__', '__notes__', '__attachments__', '__emails__'].includes(activeTab)))) {
       setActiveTab(sections[0]);
     }
   }, [sections, activeTab]);
@@ -310,15 +410,56 @@ export function RecordDetail(): JSX.Element {
     e.target.value = '';
   };
 
-  /**
-   * Quick actions come from field TYPES, not field keys.
-   *
-   * This used to read `formData.email` and `formData.phone`, so the buttons
-   * only appeared on a module that happened to name its fields exactly that —
-   * a Guardrail 14 violation ("behaviour belongs to the field type"). Now the
-   * first email-typed field gives a mailto and the first phone-typed field a
-   * tel, for every module.
-   */
+  const handleOpenCompose = (presetChannel?: 'email' | 'whatsapp' | 'sms', to?: string, defaultSubject?: string) => {
+    setComposeChannel(presetChannel || 'email');
+    const toEmail = to || emailValue || (formData?.email as string) || '';
+    const toPhone = to || phoneValue || (formData?.phone as string) || (formData?.mobile as string) || '';
+    setEmailTo(toEmail);
+    setComposePhone(toPhone);
+    setEmailSubject(defaultSubject || '');
+    setEmailBody('');
+    setComposeDltTemplateId('');
+    setEmailModalOpen(true);
+  };
+
+  const handleSendMessage = () => {
+    if (!recordId) return;
+
+    if (composeChannel === 'email') {
+      if (!emailTo.trim()) {
+        toast({ title: 'Recipient email is required', variant: 'destructive' });
+        return;
+      }
+      sendEmailMut.mutate({
+        recordId,
+        toEmail: emailTo.trim(),
+        subject: emailSubject.trim() || 'Message from CRM',
+        bodyText: emailBody,
+      });
+    } else if (composeChannel === 'whatsapp') {
+      if (!composePhone.trim()) {
+        toast({ title: 'Recipient phone number is required', variant: 'destructive' });
+        return;
+      }
+      sendWhatsAppMut.mutate({
+        recordId,
+        toPhone: composePhone.trim(),
+        text: emailBody,
+      });
+    } else if (composeChannel === 'sms') {
+      if (!composePhone.trim()) {
+        toast({ title: 'Recipient phone number is required', variant: 'destructive' });
+        return;
+      }
+      sendSmsMut.mutate({
+        recordId,
+        toPhone: composePhone.trim(),
+        text: emailBody,
+        dltTemplateId: composeDltTemplateId.trim() || undefined,
+      });
+    }
+  };
+
   const emailField = moduleDef?.fields.find((f) => f.type === 'email');
   const phoneField = moduleDef?.fields.find((f) => f.type === 'phone');
   const emailValue = emailField ? String(formData[emailField.key] ?? '') : '';
@@ -326,9 +467,11 @@ export function RecordDetail(): JSX.Element {
 
   const notesList = timelineEvents.filter((ev) => ev.type === 'note');
   const attachmentsList = timelineEvents.filter((ev) => ev.type === 'attachment');
+  const messagesEvents = timelineEvents.filter((ev) => ev.type.startsWith('message.') || ev.type.startsWith('email.'));
 
   const filteredTimeline = timelineEvents.filter((ev) => {
     if (timelineFilter === 'all') return true;
+    if (timelineFilter === 'message') return ev.type.startsWith('message.') || ev.type.startsWith('email.');
     return ev.type === timelineFilter;
   });
 
@@ -427,13 +570,14 @@ export function RecordDetail(): JSX.Element {
 
           <div className="flex items-center gap-2 self-end md:self-auto">
             {emailValue && (
-              <a
-                href={`mailto:${emailValue}`}
+              <button
+                type="button"
+                onClick={() => handleOpenCompose()}
                 className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 bg-white text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors shadow-sm"
-                title={`${emailField?.label ?? 'Email'}: ${emailValue}`}
+                title={`Send email to ${emailValue}`}
               >
                 <Mail className="h-4 w-4" />
-              </a>
+              </button>
             )}
 
             {phoneValue && (
@@ -586,6 +730,24 @@ export function RecordDetail(): JSX.Element {
                     </span>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('__emails__')}
+                  className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    activeTab === '__emails__'
+                      ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                  }`}
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  <span>Messages</span>
+                  {recordMessages.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+                      {recordMessages.length}
+                    </span>
+                  )}
+                </button>
               </div>
 
               <div className="p-6">
@@ -600,6 +762,15 @@ export function RecordDetail(): JSX.Element {
                         }`}
                       >
                         All ({timelineEvents.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimelineFilter('message')}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                          timelineFilter === 'message' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Emails ({messagesEvents.length})
                       </button>
                       <button
                         type="button"
@@ -650,6 +821,8 @@ export function RecordDetail(): JSX.Element {
                                 <MessageSquare className="h-2.5 w-2.5 text-blue-600" />
                               ) : ev.type === 'attachment' ? (
                                 <Paperclip className="h-2.5 w-2.5 text-blue-600" />
+                              ) : ev.type.startsWith('message.') || ev.type.startsWith('email.') ? (
+                                <Mail className="h-2.5 w-2.5 text-blue-600" />
                               ) : (
                                 <Clock className="h-2.5 w-2.5 text-blue-600" />
                               )}
@@ -670,7 +843,50 @@ export function RecordDetail(): JSX.Element {
                                 </span>
                               </div>
 
-                              {ev.type === 'stage_changed' ? (
+                              {ev.type === 'message.sent' ? (
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[10px]">
+                                      Outbound Email
+                                    </Badge>
+                                    <span className="font-semibold text-slate-800 text-xs">
+                                      {String((ev.payload as any)?.subject || '(No subject)')}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-500">
+                                    To: {(ev.payload as any)?.to}
+                                  </p>
+                                </div>
+                              ) : ev.type === 'message.received' ? (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <Badge className="bg-emerald-50 text-emerald-800 border-emerald-300 text-[10px]">
+                                      Inbound Reply
+                                    </Badge>
+                                    <span className="font-semibold text-slate-800 text-xs">
+                                      {String((ev.payload as any)?.subject || '(No subject)')}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-500">
+                                    From: {(ev.payload as any)?.from}
+                                  </p>
+                                  {(ev.payload as any)?.preview && (
+                                    <p className="text-xs text-slate-700 bg-white p-2.5 rounded border border-slate-200 whitespace-pre-wrap leading-relaxed">
+                                      {(ev.payload as any)?.preview}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : ev.type === 'email.bounced' ? (
+                                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded text-xs space-y-1">
+                                  <div className="font-bold text-rose-800 flex items-center gap-1.5">
+                                    <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
+                                    Hard Bounce - Address Suppressed
+                                  </div>
+                                  <div className="text-rose-700">
+                                    {(ev.payload as any)?.email}: {(ev.payload as any)?.reason || 'Undeliverable address'}
+                                  </div>
+                                </div>
+                              ) : ev.type === 'stage_changed' ? (
                                 <p className="text-xs text-slate-700">
                                   Moved stage to{' '}
                                   <span className="font-bold text-blue-600">
@@ -943,6 +1159,138 @@ export function RecordDetail(): JSX.Element {
                       )}
                     </div>
                   </div>
+                ) : activeTab === '__emails__' ? (
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-800">Unified Communications Thread</h4>
+                        <p className="text-xs text-slate-500">
+                          Single conversation timeline across Email, Meta WhatsApp Cloud, and SMS.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {sessionWindow && (
+                          <span
+                            className={`text-[11px] px-2.5 py-1 rounded-full font-medium flex items-center gap-1 border ${
+                              sessionWindow.isOpen
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                            }`}
+                            title={sessionWindow.isOpen ? 'Free-form WhatsApp messages allowed' : 'Pre-approved WhatsApp template required'}
+                          >
+                            <MessageSquare className="h-3 w-3" />
+                            {sessionWindow.isOpen
+                              ? `WhatsApp 24h Active (${sessionWindow.remainingMinutes}m)`
+                              : 'WhatsApp 24h Expired'}
+                          </span>
+                        )}
+                        <Button
+                          type="button"
+                          onClick={() => handleOpenCompose('email')}
+                          className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs h-8"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>Compose Message</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {recordMessages.length === 0 ? (
+                        <div className="py-12 text-center text-slate-400 text-sm">
+                          No communications recorded for this record yet. Click &quot;Compose Message&quot; to send via Email, WhatsApp, or SMS.
+                        </div>
+                      ) : (
+                        recordMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`rounded-xl border p-4 space-y-3 transition-shadow ${
+                              msg.direction === 'inbound'
+                                ? 'bg-emerald-50/40 border-emerald-200 shadow-xs'
+                                : 'bg-white border-slate-200 shadow-xs'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3 text-xs">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {msg.channel === 'whatsapp' ? (
+                                    <Badge className="bg-emerald-600 text-white flex items-center gap-1 text-[10px]">
+                                      <MessageSquare className="h-3 w-3" /> WhatsApp
+                                    </Badge>
+                                  ) : msg.channel === 'sms' ? (
+                                    <Badge className="bg-purple-600 text-white flex items-center gap-1 text-[10px]">
+                                      <Phone className="h-3 w-3" /> SMS
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-blue-600 text-white flex items-center gap-1 text-[10px]">
+                                      <Mail className="h-3 w-3" /> Email
+                                    </Badge>
+                                  )}
+
+                                  {msg.direction === 'inbound' ? (
+                                    <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 flex items-center gap-1 text-[10px]">
+                                      <ArrowDownLeft className="h-3 w-3" /> Inbound Reply
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-slate-100 text-slate-700 border-slate-200 flex items-center gap-1 text-[10px]">
+                                      <ArrowUpRight className="h-3 w-3" /> Outbound Send
+                                    </Badge>
+                                  )}
+
+                                  {msg.subject && (
+                                    <span className="font-bold text-slate-900 text-sm">
+                                      {msg.subject}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                                  <span>From: <strong className="text-slate-700">{msg.fromAddress}</strong></span>
+                                  <span>To: <strong className="text-slate-700">{msg.toAddress}</strong></span>
+                                </div>
+                              </div>
+                              <div className="text-right space-y-1">
+                                <span className="text-slate-400 text-[11px] block">
+                                  {new Date(msg.createdAt).toLocaleString()}
+                                </span>
+                                {msg.status === 'bounced' ? (
+                                  <Badge className="bg-rose-100 text-rose-800 border-rose-300 text-[10px]">
+                                    Bounced
+                                  </Badge>
+                                ) : msg.status === 'delivered' ? (
+                                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px]">
+                                    Delivered
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[10px] capitalize">
+                                    {msg.status}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="text-xs text-slate-800 whitespace-pre-wrap font-sans leading-relaxed bg-white/70 p-3 rounded-lg border border-slate-100">
+                              {msg.bodyText || '(No message text)'}
+                            </div>
+
+                            {msg.direction === 'inbound' && (
+                              <div className="flex justify-end pt-1">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleOpenCompose((msg.channel as any) || 'email', msg.fromAddress, `Re: ${msg.subject || ''}`)}
+                                  className="h-7 text-xs gap-1 text-slate-700"
+                                >
+                                  <Send className="h-3 w-3" />
+                                  <span>Reply on {msg.channel === 'whatsapp' ? 'WhatsApp' : msg.channel === 'sms' ? 'SMS' : 'Email'}</span>
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 ) : activeSectionFields.length === 0 ? (
                   <div className="py-12 text-center text-slate-400 text-sm">
                     No fields configured in this section.
@@ -1124,6 +1472,192 @@ export function RecordDetail(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <Dialog open={emailModalOpen} onOpenChange={setEmailModalOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {composeChannel === 'whatsapp' ? (
+                <MessageSquare className="h-5 w-5 text-emerald-600" />
+              ) : composeChannel === 'sms' ? (
+                <Phone className="h-5 w-5 text-purple-600" />
+              ) : (
+                <Mail className="h-5 w-5 text-blue-600" />
+              )}
+              <span>
+                {composeChannel === 'whatsapp'
+                  ? 'Send WhatsApp Message'
+                  : composeChannel === 'sms'
+                  ? 'Send SMS Message'
+                  : 'Compose Email to Contact'}
+              </span>
+            </DialogTitle>
+            <DialogDescription>
+              Dispatches authenticated communication across configured providers tracked on the unified lead timeline.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3 pt-1">
+            <span className="text-xs font-semibold text-slate-500">Channel:</span>
+            <button
+              type="button"
+              onClick={() => setComposeChannel('email')}
+              className={`px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                composeChannel === 'email'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <Mail className="h-3.5 w-3.5" /> Email
+            </button>
+            <button
+              type="button"
+              onClick={() => setComposeChannel('whatsapp')}
+              className={`px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                composeChannel === 'whatsapp'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" /> WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={() => setComposeChannel('sms')}
+              className={`px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                composeChannel === 'sms'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <Phone className="h-3.5 w-3.5" /> SMS
+            </button>
+          </div>
+
+          <div className="space-y-4 py-2 text-xs">
+            {composeChannel === 'email' ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Recipient Email Address</label>
+                  <Input
+                    placeholder="contact@company.com"
+                    value={emailTo}
+                    onChange={(e) => setEmailTo(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Subject</label>
+                  <Input
+                    placeholder="Subject line..."
+                    value={emailSubject}
+                    onChange={(e) => setEmailSubject(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : composeChannel === 'whatsapp' ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Recipient Phone (WhatsApp Number)</label>
+                  <Input
+                    placeholder="+91 98765 43210"
+                    value={composePhone}
+                    onChange={(e) => setComposePhone(e.target.value)}
+                  />
+                </div>
+
+                {sessionWindow && (
+                  <div
+                    className={`p-3 rounded-lg border text-xs flex items-start gap-2 ${
+                      sessionWindow.isOpen
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-amber-50 border-amber-200 text-amber-800'
+                    }`}
+                  >
+                    <MessageSquare className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-bold">
+                        {sessionWindow.isOpen
+                          ? `24-Hour Customer Care Window Active (${sessionWindow.remainingMinutes} min remaining)`
+                          : 'Customer Session Window Closed (24h Inactivity)'}
+                      </div>
+                      <div className="text-[11px] mt-0.5">
+                        {sessionWindow.isOpen
+                          ? 'Customer messaged recently. Free-form text and media responses are permitted by Meta.'
+                          : 'Outside 24 hours from customer reply. Pre-approved Meta HSM template required.'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Recipient Mobile Number</label>
+                  <Input
+                    placeholder="+91 98765 43210"
+                    value={composePhone}
+                    onChange={(e) => setComposePhone(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">DLT Template ID (Indian Route)</label>
+                  <Input
+                    placeholder="e.g. 1107161234567890123"
+                    value={composeDltTemplateId}
+                    onChange={(e) => setComposeDltTemplateId(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700">Message Content</label>
+              <textarea
+                rows={5}
+                value={emailBody}
+                onChange={(e) => setEmailBody(e.target.value)}
+                placeholder="Type your message content..."
+                className="w-full rounded-md border border-slate-200 p-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEmailModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSendMessage}
+              disabled={
+                sendEmailMut.isPending ||
+                sendWhatsAppMut.isPending ||
+                sendSmsMut.isPending ||
+                (composeChannel === 'email' ? !emailTo.trim() : !composePhone.trim()) ||
+                !emailBody.trim()
+              }
+              className={`gap-1.5 text-white ${
+                composeChannel === 'whatsapp'
+                  ? 'bg-emerald-600 hover:bg-emerald-700'
+                  : composeChannel === 'sms'
+                  ? 'bg-purple-600 hover:bg-purple-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              <Send className="h-4 w-4" />
+              {sendEmailMut.isPending || sendWhatsAppMut.isPending || sendSmsMut.isPending
+                ? 'Sending...'
+                : composeChannel === 'whatsapp'
+                ? 'Send WhatsApp Message'
+                : composeChannel === 'sms'
+                ? 'Send Outbound SMS'
+                : 'Send Outbound Email'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+

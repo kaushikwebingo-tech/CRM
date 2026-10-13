@@ -1,6 +1,16 @@
+import { Injectable } from '@nestjs/common';
 import * as crypto from 'node:crypto';
 
+@Injectable()
 export class CredentialVault {
+  encrypt(data: unknown, customKey?: string): string {
+    return CredentialVault.encrypt(data, customKey);
+  }
+
+  decrypt<T = any>(payload: string, customKey?: string): T {
+    return CredentialVault.decrypt<T>(payload, customKey);
+  }
+
   private static getKeyBuffer(secret?: string): Buffer {
     const raw = secret || process.env.ENCRYPTION_KEY || 'crm-vault-master-key-32-chars-!!';
     return crypto.createHash('sha256').update(raw).digest();

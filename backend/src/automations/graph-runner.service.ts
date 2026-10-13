@@ -42,12 +42,17 @@ export function normalizeNodes(actions: unknown): AutomationNode[] {
     if (actions.length === 0) return [];
     const first = actions[0];
     if (first && (first.type === 'action' || first.type === 'branch' || first.type === 'wait' || first.type === 'stop')) {
-      return actions as AutomationNode[];
+      return actions.map((item: any) => {
+        if (item.type === 'action' && !item.handler && item.action) {
+          return { ...item, handler: item.action };
+        }
+        return item;
+      }) as AutomationNode[];
     }
     return actions.map((item: any, idx: number) => ({
       id: item.id || `node_${idx + 1}`,
       type: 'action',
-      handler: item.type,
+      handler: item.handler || item.action || item.type,
       config: item.config || {},
       next: idx < actions.length - 1 ? (actions[idx + 1].id || `node_${idx + 2}`) : null,
     }));
@@ -159,9 +164,10 @@ export class GraphRunnerService {
           continue;
         }
 
-        const handler = getActionHandler(actionNode.handler);
+        const handlerKey = actionNode.handler || (actionNode as any).action;
+        const handler = getActionHandler(handlerKey);
         if (!handler) {
-          const err = `Action handler "${actionNode.handler}" is not registered`;
+          const err = `Action handler "${handlerKey || actionNode.handler}" is not registered`;
           steps.push({
             nodeId: actionNode.id,
             type: 'action',

@@ -4,6 +4,9 @@ import { updateFieldAction } from './update-field.action';
 import { assignOwnerAction } from './assign-owner.action';
 import { changeStageAction } from './change-stage.action';
 import { createRecordAction } from './create-record.action';
+import { sendEmailAction } from './send-email.action';
+import { sendWhatsAppAction } from './send-whatsapp.action';
+import { sendSmsAction } from './send-sms.action';
 
 const registry = new Map<string, ActionHandler>();
 
@@ -13,6 +16,9 @@ registry.set(updateFieldAction.key, updateFieldAction);
 registry.set(assignOwnerAction.key, assignOwnerAction);
 registry.set(changeStageAction.key, changeStageAction);
 registry.set(createRecordAction.key, createRecordAction);
+registry.set(sendEmailAction.key, sendEmailAction);
+registry.set(sendWhatsAppAction.key, sendWhatsAppAction);
+registry.set(sendSmsAction.key, sendSmsAction);
 
 export function getActionHandler(key: string): ActionHandler | undefined {
   return registry.get(key);
