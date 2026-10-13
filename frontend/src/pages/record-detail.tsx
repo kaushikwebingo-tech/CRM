@@ -15,6 +15,7 @@ import {
 } from '@/api/records';
 import { fetchRecordMessages, sendRecordEmail, MessageItem } from '@/api/email';
 import { sendWhatsApp, sendSms, fetchSessionWindow } from '@/api/messaging';
+import { fetchActivities, createActivity, updateActivity, Activity } from '@/api/activities';
 import { getFieldComponent } from '@/components/fields/registry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,6 +54,7 @@ import {
   Plus,
   ArrowUpRight,
   ArrowDownLeft,
+  Calendar,
 } from 'lucide-react';
 
 export function RecordDetail(): JSX.Element {
@@ -111,6 +113,55 @@ export function RecordDetail(): JSX.Element {
     queryKey: ['records', recordId, 'session-window'],
     queryFn: () => (recordId ? fetchSessionWindow(recordId) : null),
     enabled: Boolean(recordId),
+  });
+
+  const { data: activitiesList = [], refetch: refetchActivities } = useQuery<Activity[]>({
+    queryKey: ['records', recordId, 'activities'],
+    queryFn: () => (recordId ? fetchActivities({ relatedToId: recordId }) : []),
+    enabled: Boolean(recordId),
+  });
+
+  const [activityModalOpen, setActivityModalOpen] = useState(false);
+  const [activityType, setActivityType] = useState<'task' | 'call' | 'meeting' | 'note'>('task');
+  const [activityTitle, setActivityTitle] = useState('');
+  const [activityDueDate, setActivityDueDate] = useState('');
+  const [activityPriority, setActivityPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
+  const [activityNotes, setActivityNotes] = useState('');
+
+  const createActivityMut = useMutation({
+    mutationFn: (payload: any) => createActivity(payload),
+    onSuccess: () => {
+      setActivityModalOpen(false);
+      setActivityTitle('');
+      setActivityDueDate('');
+      setActivityNotes('');
+      refetchActivities();
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      toast({
+        title: 'Activity created',
+        description: 'New activity logged successfully.',
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Failed to create activity',
+        description: err.message || 'Error creating activity',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const completeActivityMut = useMutation({
+    mutationFn: ({ id, stageId }: { id: string; stageId: string }) =>
+      updateActivity(id, { stageId }),
+    onSuccess: () => {
+      refetchActivities();
+      queryClient.invalidateQueries({ queryKey: ['records', moduleKey, recordId, 'timeline'] });
+      toast({
+        title: 'Activity updated',
+        description: 'Activity status updated.',
+      });
+    },
   });
 
   const sendEmailMut = useMutation({
@@ -199,7 +250,7 @@ export function RecordDetail(): JSX.Element {
   );
 
   useEffect(() => {
-    if (sections.length > 0 && (!activeTab || (!sections.includes(activeTab) && !['__timeline__', '__notes__', '__attachments__', '__emails__'].includes(activeTab)))) {
+    if (sections.length > 0 && (!activeTab || (!sections.includes(activeTab) && !['__timeline__', '__notes__', '__attachments__', '__emails__', '__activities__'].includes(activeTab)))) {
       setActiveTab(sections[0]);
     }
   }, [sections, activeTab]);
@@ -748,6 +799,24 @@ export function RecordDetail(): JSX.Element {
                     </span>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('__activities__')}
+                  className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    activeTab === '__activities__'
+                      ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                  }`}
+                >
+                  <Calendar className="h-4 w-4" />
+                  <span>Activities</span>
+                  {activitiesList.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+                      {activitiesList.length}
+                    </span>
+                  )}
+                </button>
               </div>
 
               <div className="p-6">
@@ -1291,6 +1360,113 @@ export function RecordDetail(): JSX.Element {
                       )}
                     </div>
                   </div>
+                ) : activeTab === '__activities__' ? (
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-800">Record Activities</h4>
+                        <p className="text-xs text-slate-500">
+                          Track next steps, phone calls, client meetings, and actionable tasks.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setActivityType('task');
+                          setActivityTitle('');
+                          setActivityDueDate('');
+                          setActivityNotes('');
+                          setActivityModalOpen(true);
+                        }}
+                        className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs h-8"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Log Activity</span>
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {activitiesList.length === 0 ? (
+                        <div className="py-12 text-center text-slate-400 text-sm">
+                          No activities logged for this record yet. Click &quot;Log Activity&quot; to add a task, call, or meeting.
+                        </div>
+                      ) : (
+                        activitiesList.map((act) => (
+                          <div
+                            key={act.id}
+                            className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3"
+                          >
+                            <div className="flex items-start justify-between gap-3 text-xs">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Badge
+                                    className={`capitalize text-[10px] ${
+                                      act.activityType === 'task'
+                                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                        : act.activityType === 'call'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : act.activityType === 'meeting'
+                                        ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                                    }`}
+                                  >
+                                    {act.activityType}
+                                  </Badge>
+
+                                  <span className="font-bold text-slate-900 text-sm">
+                                    {act.title}
+                                  </span>
+
+                                  {Boolean(act.data?.priority) && (
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[10px] uppercase font-semibold ${
+                                        act.data?.priority === 'urgent'
+                                          ? 'text-rose-600 border-rose-300'
+                                          : act.data?.priority === 'high'
+                                          ? 'text-amber-600 border-amber-300'
+                                          : 'text-slate-600 border-slate-200'
+                                      }`}
+                                    >
+                                      {String(act.data?.priority)}
+                                    </Badge>
+                                  )}
+                                </div>
+
+                                <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                                  {Boolean(act.data?.due_date) && (
+                                    <span className="flex items-center gap-1 text-slate-600">
+                                      <Clock className="h-3 w-3 text-slate-400" />
+                                      Due: {new Date(String(act.data?.due_date)).toLocaleString()}
+                                    </span>
+                                  )}
+                                  <span>Logged: {new Date(act.createdAt).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => completeActivityMut.mutate({ id: act.id, stageId: 'done' })}
+                                disabled={completeActivityMut.isPending}
+                                className="h-7 text-xs gap-1 text-slate-600 hover:text-emerald-700 hover:border-emerald-300"
+                              >
+                                <Check className="h-3 w-3" />
+                                <span>Done</span>
+                              </Button>
+                            </div>
+
+                            {Boolean(act.data?.notes) && (
+                              <div className="text-xs text-slate-700 whitespace-pre-wrap bg-slate-50/70 p-3 rounded-lg border border-slate-100">
+                                {String(act.data?.notes)}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 ) : activeSectionFields.length === 0 ? (
                   <div className="py-12 text-center text-slate-400 text-sm">
                     No fields configured in this section.
@@ -1653,6 +1829,112 @@ export function RecordDetail(): JSX.Element {
                 : composeChannel === 'sms'
                 ? 'Send Outbound SMS'
                 : 'Send Outbound Email'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={activityModalOpen} onOpenChange={setActivityModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-blue-600" />
+              <span>Log New Activity</span>
+            </DialogTitle>
+            <DialogDescription>
+              Schedule a task, log a phone call, or register a meeting linked to this record.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700">Activity Type</label>
+              <div className="grid grid-cols-4 gap-2">
+                {(['task', 'call', 'meeting', 'note'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setActivityType(t)}
+                    className={`py-1.5 px-2 rounded-md font-semibold capitalize text-center text-xs transition-colors ${
+                      activityType === t
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700">Subject / Title</label>
+              <Input
+                placeholder="e.g. Follow-up demo call"
+                value={activityTitle}
+                onChange={(e) => setActivityTitle(e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Priority</label>
+                <select
+                  value={activityPriority}
+                  onChange={(e) => setActivityPriority(e.target.value as any)}
+                  className="w-full h-9 rounded-md border border-slate-200 bg-white px-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Due Date / Time</label>
+                <Input
+                  type="datetime-local"
+                  value={activityDueDate}
+                  onChange={(e) => setActivityDueDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700">Notes / Agenda</label>
+              <textarea
+                rows={4}
+                value={activityNotes}
+                onChange={(e) => setActivityNotes(e.target.value)}
+                placeholder="Enter details, action points, or meeting links..."
+                className="w-full rounded-md border border-slate-200 p-2.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setActivityModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!activityTitle.trim() || !moduleKey || !recordId) return;
+                createActivityMut.mutate({
+                  activityType,
+                  title: activityTitle.trim(),
+                  relatedToModule: moduleKey,
+                  relatedToId: recordId,
+                  priority: activityPriority,
+                  dueDate: activityDueDate || undefined,
+                  body: activityNotes || undefined,
+                });
+              }}
+              disabled={createActivityMut.isPending || !activityTitle.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{createActivityMut.isPending ? 'Logging...' : 'Save Activity'}</span>
             </Button>
           </DialogFooter>
         </DialogContent>

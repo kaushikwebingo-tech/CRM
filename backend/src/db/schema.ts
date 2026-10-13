@@ -359,3 +359,83 @@ export const consents = pgTable(
   }),
 );
 
+export const leadSources = pgTable(
+  'lead_sources',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    name: text('name').notNull(),
+    type: text('type').default('web_form').notNull(),
+    targetModuleKey: text('target_module_key').default('lead').notNull(),
+    fieldMapping: jsonb('field_mapping').default({}).notNull(),
+    defaults: jsonb('defaults').default({}).notNull(),
+    dedupeOn: jsonb('dedupe_on').default(['email']).notNull(),
+    onDuplicate: text('on_duplicate').default('update_existing').notNull(),
+    assignTo: jsonb('assign_to').default({}).notNull(),
+    config: jsonb('config').default({}).notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    secret: text('secret').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => ({
+    idxOrg: index('idx_lead_sources_org').on(table.orgId),
+  }),
+);
+
+export const quarantine = pgTable(
+  'quarantine',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    sourceId: uuid('source_id').references(() => leadSources.id, { onDelete: 'set null' }),
+    sourceType: text('source_type').notNull(),
+    rawPayload: jsonb('raw_payload').notNull(),
+    errorReason: text('error_reason').notNull(),
+    errorDetails: jsonb('error_details').default({}).notNull(),
+    status: text('status').default('quarantined').notNull(),
+    replayedRecordId: uuid('replayed_record_id').references(() => records.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    replayedAt: timestamp('replayed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    idxOrgStatus: index('idx_quarantine_org_status').on(table.orgId, table.status),
+  }),
+);
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+    eventType: text('event_type').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    channel: text('channel').default('in_app').notNull(),
+    data: jsonb('data').default({}).notNull(),
+    isRead: boolean('is_read').default(false).notNull(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxUserUnread: index('idx_notifications_user_unread').on(table.userId, table.isRead),
+  }),
+);
+
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+    token: text('token').unique().notNull(),
+    platform: text('platform').default('web').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxUser: index('idx_device_tokens_user').on(table.userId),
+  }),
+);
+

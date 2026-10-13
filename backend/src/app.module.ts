@@ -11,6 +11,9 @@ import { TemplatesModule } from './templates/templates.module';
 import { EmailModule } from './email/email.module';
 import { ConsentModule } from './consents/consent.module';
 import { MessagingModule } from './messaging/messaging.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { CaptureModule } from './capture/capture.module';
+import { ActivitiesModule } from './activities/activities.module';
 import { AuthGuard } from './auth/auth.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { RateLimitGuard } from './common/rate-limit.guard';
@@ -30,6 +33,9 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     EmailModule,
     ConsentModule,
     MessagingModule,
+    NotificationsModule,
+    CaptureModule,
+    ActivitiesModule,
   ],
   providers: [
     {
