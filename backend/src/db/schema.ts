@@ -439,3 +439,100 @@ export const deviceTokens = pgTable(
   }),
 );
 
+export const rules = pgTable(
+  'rules',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    moduleId: uuid('module_id').references(() => modules.id, { onDelete: 'cascade' }).notNull(),
+    kind: text('kind').notNull(),
+    name: text('name').notNull(),
+    conditions: jsonb('conditions').default({}),
+    config: jsonb('config').default({}).notNull(),
+    priority: integer('priority').default(0).notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxOrgModuleKind: index('idx_rules_org_module_kind').on(table.orgId, table.moduleId, table.kind),
+  }),
+);
+
+export const orgCalendars = pgTable(
+  'org_calendars',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    name: text('name').default('Default Working Hours').notNull(),
+    timezone: text('timezone').default('Asia/Kolkata').notNull(),
+    workingDays: jsonb('working_days').default([1, 2, 3, 4, 5]).notNull(),
+    startTime: text('start_time').default('09:30').notNull(),
+    endTime: text('end_time').default('18:30').notNull(),
+    holidays: jsonb('holidays').default([]).notNull(),
+    isDefault: boolean('is_default').default(true).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxOrg: index('idx_org_calendars_org').on(table.orgId),
+  }),
+);
+
+export const slaInstances = pgTable(
+  'sla_instances',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    ruleId: uuid('rule_id').references(() => rules.id, { onDelete: 'cascade' }).notNull(),
+    recordId: uuid('record_id').references(() => records.id, { onDelete: 'cascade' }).notNull(),
+    status: text('status').default('active').notNull(),
+    targetMinutes: integer('target_minutes').notNull(),
+    businessHoursOnly: boolean('business_hours_only').default(true).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    targetAt: timestamp('target_at', { withTimezone: true }).notNull(),
+    escalationsFired: jsonb('escalations_fired').default([]).notNull(),
+    fulfilledAt: timestamp('fulfilled_at', { withTimezone: true }),
+    breachedAt: timestamp('breached_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxRecordStatus: index('idx_sla_instances_record_status').on(table.recordId, table.status),
+    idxActiveTargets: index('idx_sla_instances_active_targets').on(table.orgId, table.targetAt),
+  }),
+);
+
+export const reports = pgTable(
+  'reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    moduleKey: text('module_key').notNull(),
+    name: text('name').notNull(),
+    type: text('type').default('funnel').notNull(),
+    config: jsonb('config').default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxOrgModule: index('idx_reports_org_module').on(table.orgId, table.moduleKey),
+  }),
+);
+
+export const dashboards = pgTable(
+  'dashboards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }).notNull(),
+    name: text('name').notNull(),
+    layout: jsonb('layout').default([]).notNull(),
+    widgets: jsonb('widgets').default([]).notNull(),
+    isDefault: boolean('is_default').default(false).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxOrg: index('idx_dashboards_org').on(table.orgId),
+  }),
+);
+

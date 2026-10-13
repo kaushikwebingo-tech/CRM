@@ -9,6 +9,8 @@ import { SchemaCompiler } from '../metadata/schema-compiler';
 import { DedupService } from './dedup.service';
 import { AssignmentService } from './assignment.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RoutingService } from '../routing/routing.service';
+import { SlaService } from '../routing/sla.service';
 import {
   CreateLeadSourceDto,
   UpdateLeadSourceDto,
@@ -28,6 +30,8 @@ export class CaptureService {
     private readonly dedupService: DedupService,
     private readonly assignmentService: AssignmentService,
     private readonly notificationsService: NotificationsService,
+    private readonly routingService: RoutingService,
+    private readonly slaService: SlaService,
   ) {}
 
   private jsonb(value: unknown): string {
@@ -365,7 +369,14 @@ export class CaptureService {
       }
     }
 
-    const assignedOwnerId = await this.assignmentService.resolveOwner(
+    const routedAssignment = await this.routingService.evaluateAssignment(
+      orgId,
+      mod.id,
+      mappedData,
+      null,
+    );
+
+    const assignedOwnerId = routedAssignment.ownerId || await this.assignmentService.resolveOwner(
       orgId,
       source.id,
       source.assign_to || {},
@@ -420,6 +431,8 @@ export class CaptureService {
     `;
 
     targetRecordId = inserted.id;
+
+    await this.slaService.attachSlaToRecord(orgId, mod.id, inserted);
 
     await this.sql`
       INSERT INTO record_events (

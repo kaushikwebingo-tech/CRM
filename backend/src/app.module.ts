@@ -14,6 +14,8 @@ import { MessagingModule } from './messaging/messaging.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CaptureModule } from './capture/capture.module';
 import { ActivitiesModule } from './activities/activities.module';
+import { RoutingModule } from './routing/routing.module';
+import { ReportsModule } from './reports/reports.module';
 import { AuthGuard } from './auth/auth.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { RateLimitGuard } from './common/rate-limit.guard';
@@ -36,6 +38,8 @@ import { ResponseInterceptor, IdempotencyInterceptor } from './common/intercepto
     NotificationsModule,
     CaptureModule,
     ActivitiesModule,
+    RoutingModule,
+    ReportsModule,
   ],
   providers: [
     {

@@ -40,24 +40,27 @@ function evaluate(
 ): boolean {
   if (depth > MAX_DEPTH) return false;
 
-  const group = node as Group;
-  if (group.and || group.or) {
+  const group = node as any;
+  const andList = group.and || group.all;
+  const orList = group.or || group.any;
+  if (andList || orList) {
     let result = true;
-    if (group.and) {
-      if (!Array.isArray(group.and)) return false;
-      result = group.and.every((child) => evaluate(child, record, event, depth + 1));
+    if (andList) {
+      if (!Array.isArray(andList)) return false;
+      result = andList.every((child: any) => evaluate(child, record, event, depth + 1));
     }
-    if (group.or) {
-      if (!Array.isArray(group.or)) return false;
-      const anyTrue = group.or.some((child) => evaluate(child, record, event, depth + 1));
-      result = group.and ? result && anyTrue : anyTrue;
+    if (orList) {
+      if (!Array.isArray(orList)) return false;
+      const anyTrue = orList.some((child: any) => evaluate(child, record, event, depth + 1));
+      result = andList ? result && anyTrue : anyTrue;
     }
     return result;
   }
 
-  const rule = node as Rule;
-  if (typeof rule.field !== 'string' || typeof rule.op !== 'string') return false;
-  return evaluateRule(rule, record, event);
+  const field = group.field;
+  const op = group.op || group.operator;
+  if (typeof field !== 'string' || typeof op !== 'string') return false;
+  return evaluateRule({ field, op, value: group.value }, record, event);
 }
 
 function resolveFieldValue(
@@ -116,7 +119,6 @@ function evaluateRule(
       const a = asNumber(actual);
       const b = asNumber(expected);
       if (a === null || b === null) {
-        // fall back to a date comparison
         const da = Date.parse(asText(actual));
         const db = Date.parse(asText(expected));
         if (Number.isNaN(da) || Number.isNaN(db)) return false;
@@ -174,7 +176,6 @@ function evaluateRule(
     case 'is_not_empty':
       return !isEmpty(actual);
 
-    // "when this field changed", which is what makes a field-level trigger useful
     case 'changed':
       return Boolean(event.changes && rule.field in event.changes);
     case 'changed_to':

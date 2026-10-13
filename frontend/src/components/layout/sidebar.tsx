@@ -8,6 +8,7 @@ import {
   Package2,
   Plug,
   FileText,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import { resolveModuleIcon } from '@/lib/module-icons';
@@ -61,6 +62,18 @@ export function Sidebar(): JSX.Element {
               </NavLink>
             );
           })}
+          <NavLink
+            to="/reports"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              )
+            }
+          >
+            <BarChart3 className="h-5 w-5 shrink-0" />
+            {sidebarOpen && <span>Reports & Funnels</span>}
+          </NavLink>
         </nav>
       </div>
 

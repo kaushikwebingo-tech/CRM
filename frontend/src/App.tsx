@@ -37,6 +37,9 @@ const SettingsTemplatesPage = lazy(() =>
 const PublicFormPage = lazy(() =>
   import('@/pages/public-form').then((m) => ({ default: m.PublicFormPage })),
 );
+const ReportsDashboardPage = lazy(() =>
+  import('@/pages/reports-dashboard').then((m) => ({ default: m.ReportsDashboardPage })),
+);
 
 function RouteFallback(): JSX.Element {
   return (
@@ -81,6 +84,8 @@ export function App(): JSX.Element {
                     <Route path="settings/automations" element={<SettingsAutomationsPage />} />
                     <Route path="settings/connectors" element={<SettingsConnectorsPage />} />
                     <Route path="settings/templates" element={<SettingsTemplatesPage />} />
+                    <Route path="reports" element={<ReportsDashboardPage />} />
+                    <Route path="dashboards" element={<ReportsDashboardPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>
